@@ -1,2 +1,2 @@
 # Solvers
-A collection of SMR solvers used by OpenJML
+A collection of SMT solvers used by OpenJML
