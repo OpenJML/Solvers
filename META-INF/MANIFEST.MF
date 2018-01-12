@@ -1,6 +1,6 @@
 Manifest-Version: 1.0
 Bundle-ManifestVersion: 2
 Bundle-Name: Solvers
-Bundle-SymbolicName: org.jmlspecs.openjml.Solvers;singleton:=true
-Bundle-Version: 0.8.25
+Bundle-SymbolicName: org.jmlspecs.Solvers;singleton:=true
+Bundle-Version: 1.0
 Bundle-Vendor: David R. Cok
