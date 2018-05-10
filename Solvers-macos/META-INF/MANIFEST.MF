@@ -1,7 +1,0 @@
-Manifest-Version: 1.0
-Bundle-ManifestVersion: 2
-Bundle-Name: Solvers-macos
-Bundle-SymbolicName: org.jmlspecs.openjml.Solvers-macos
-Eclipse-BundleShape: dir
-Bundle-Version: 0.8.24.5
-Fragment-Host: org.jmlspecs.OpenJMLUI;bundle-version="0.8.24"
