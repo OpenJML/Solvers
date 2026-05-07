@@ -302,8 +302,19 @@ jobs:
         ldd "$binary" || echo "(static or ldd failed)"
         echo "=== z3 version ==="
         "$binary" -version
-        echo "=== simple smoke test (SAT) ==="
-        echo "(check-sat)" | "$binary" -in
+
+        echo "=== simple smoke test (SMTLIB2 check-sat → expected: sat) ==="
+        smoke_out=$(printf '(check-sat)\n' | "$binary" -smt2 -in 2>&1)
+        echo "$smoke_out"
+        if echo "$smoke_out" | grep -q "^ERROR"; then
+            echo "FAIL: z3 reported errors during smoke test"
+            exit 1
+        fi
+        if ! echo "$smoke_out" | grep -q "^sat"; then
+            echo "FAIL: expected 'sat' in output"
+            exit 1
+        fi
+        echo "Smoke test passed"
 
     ## ── Stage ──────────────────────────────────────────────────────────────
     - name: Stage release asset
