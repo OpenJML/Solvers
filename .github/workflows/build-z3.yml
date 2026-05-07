@@ -99,7 +99,15 @@ jobs:
     - name: Generate Z3 Makefile
       run: |
         cd "z3-z3-${{ env.Z3_VERSION }}"
-        python3 -W ignore::SyntaxWarning scripts/mk_make.py
+        set +e
+        python3 -W ignore::SyntaxWarning scripts/mk_make.py > /tmp/mk_out.txt 2>&1
+        ec=$?
+        echo '## mk_make.py output' >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
+        tail -60 /tmp/mk_out.txt >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
+        cat /tmp/mk_out.txt
+        exit $ec
 
         ## Inject static C++ runtime flags into the generated build.
         ## Z3 4.3.x uses a Python-generated Makefile; the link step for the
