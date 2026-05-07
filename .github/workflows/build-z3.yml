@@ -181,7 +181,13 @@ jobs:
     ## ── Build ──────────────────────────────────────────────────────────────
     - name: Build Z3
       run: |
-        make -j$(nproc) -C "z3-z3-${{ env.Z3_VERSION }}/build" z3
+        set +e
+        make -j$(nproc) -C "z3-z3-${{ env.Z3_VERSION }}/build" z3 > /tmp/build_out.txt 2>&1
+        ec=$?
+        grep -E "error:|Error|undefined" /tmp/build_out.txt | head -10 | while IFS= read -r line; do
+            echo "::error::$line"
+        done
+        set -e; exit $ec
 
     ## ── Verify ─────────────────────────────────────────────────────────────
     - name: Verify binary
