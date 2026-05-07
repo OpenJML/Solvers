@@ -84,6 +84,37 @@ jobs:
       run: |
         cd "z3-z3-${{ env.Z3_VERSION }}"
 
+        ## 0. Strip Windows SAL annotation macros (__in, __out, __inout) from
+        ##    ALL Z3 source files.  These expand to empty on Linux — removing
+        ##    them is semantically neutral but prevents GCC 9's STL from
+        ##    misinterpreting them when the same tokens appear as variable names
+        ##    inside <bits/stl_algo.h> and <utility>.
+        python3 -c "
+        import os, pathlib, re
+        count = 0
+        for root, dirs, files in os.walk('src'):
+            for fname in files:
+                if not fname.endswith(('.h', '.cpp', '.cc', '.c')):
+                    continue
+                p = pathlib.Path(root, fname)
+                try:
+                    t = p.read_text(errors='replace')
+                except Exception:
+                    continue
+                # Remove the macro definition blocks
+                for name in ('__in', '__out', '__inout'):
+                    block = '#ifndef %s\n#define %s\n#endif' % (name, name)
+                    t = t.replace(block + '\n', '').replace(block, '')
+                # Remove usages: the token when followed by whitespace before a type
+                new_t = re.sub(r'\b__in\b', '', t)
+                new_t = re.sub(r'\b__out\b', '', new_t)
+                new_t = re.sub(r'\b__inout\b', '', new_t)
+                if new_t != t:
+                    p.write_text(new_t)
+                    count += 1
+        print(f'Stripped SAL annotations from {count} file(s)')
+        "
+
         ## 1. Convert Python 2 syntax in build scripts and Python API.
         ##    Also expand tabs (Python 3 disallows mixed tabs+spaces).
         2to3 -w scripts/ src/api/python/ > /dev/null 2>&1
