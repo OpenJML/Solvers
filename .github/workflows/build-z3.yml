@@ -51,6 +51,16 @@ jobs:
             arch_cmd:  'arch -x86_64'
 
     runs-on: ${{ matrix.runner }}
+
+    ## The container field runs all steps inside the named Docker image rather
+    ## than directly on the runner.  For Linux jobs, ubuntu:20.04 provides GCC 9
+    ## (Z3 4.3.x's C++ code has violations that GCC 10+ rejects as errors).
+    ## The runner supplies the CPU architecture and Docker engine; the container
+    ## supplies the compiler and libraries.  The resulting binary targets the
+    ## container's architecture natively — no cross-compilation or emulation.
+    ## For macOS jobs, container is '' (empty string), which GitHub Actions
+    ## treats as "no container": steps run directly on the macOS runner using
+    ## Xcode/Apple Clang.  macOS runners cannot run Linux Docker containers.
     container: ${{ matrix.container }}
 
     env:
