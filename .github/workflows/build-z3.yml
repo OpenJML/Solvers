@@ -79,12 +79,21 @@ jobs:
         ## Some Z3 4.3.x C++ header files contain Latin-1 / Windows-1252 bytes
         ## (e.g. 0x96 em-dash in a comment).  Python 3 open() defaults to UTF-8
         ## on Linux, so reading those files raises UnicodeDecodeError.
-        ## Use extended regex to capture any arguments already present (e.g. 'r'
-        ## added by 2to3) and append errors='replace' before the closing paren.
-        sed -i -E "s/open\(sig_file_path([^)]*)\)/open(sig_file_path\1, errors='replace')/g" \
-          scripts/mk_util.py
-        echo "--- open(sig_file_path) lines after patch ---"
-        grep "sig_file_path" scripts/mk_util.py || echo "(no matches — pattern may have changed)"
+        ##
+        ## Rather than hunting for the specific open() call (which changes form
+        ## after 2to3 transforms the file), prepend a builtins.open monkey-patch
+        ## to mk_util.py so that EVERY text-mode file open uses errors='replace'.
+        printf '%s\n' \
+          'import builtins as _b' \
+          '_ro = _b.open' \
+          "def _so(f, mode='r', *a, **k):" \
+          "    if 'b' not in str(mode) and 'errors' not in k and 'encoding' not in k:" \
+          "        k['errors'] = 'replace'" \
+          '    return _ro(f, mode, *a, **k)' \
+          '_b.open = _so' \
+          '' \
+          | cat - scripts/mk_util.py > /tmp/mk_patched.py
+        cp /tmp/mk_patched.py scripts/mk_util.py
 
         ## -W ignore::SyntaxWarning suppresses invalid-escape-sequence warnings
         ## in Z3 4.3.x string literals that 2to3 does not fix (they are
