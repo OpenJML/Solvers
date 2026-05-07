@@ -85,10 +85,10 @@ jobs:
       run: |
         cd "z3-z3-${{ env.Z3_VERSION }}"
 
-        ## 1. Convert Python 2 syntax in build scripts.
+        ## 1. Convert Python 2 syntax in build scripts and Python API.
         ##    Also expand tabs (Python 3 disallows mixed tabs+spaces).
-        2to3 -w scripts/ > /dev/null 2>&1
-        for f in scripts/*.py; do
+        2to3 -w scripts/ src/api/python/ > /dev/null 2>&1
+        for f in scripts/*.py src/api/python/*.py; do
             expand -t 8 "$f" > /tmp/pf && mv /tmp/pf "$f"
         done
 
@@ -99,8 +99,7 @@ jobs:
         import pathlib
         p = pathlib.Path('scripts/mk_make.py')
         t = p.read_text()
-        for skip in ['check_eol()', 'mk_bindings(API_files)',
-                     'mk_vs_proj(']:
+        for skip in ['check_eol()', 'mk_vs_proj(']:
             t = '\n'.join(
                 ('# ' + l if l.strip().startswith(skip.split('(')[0]) else l)
                 for l in t.splitlines()
