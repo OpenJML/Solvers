@@ -35,11 +35,11 @@ jobs:
     ## Falls back to ARM64 defaults when triggered by a push (inputs are empty).
     runs-on: ${{ inputs.runner_os || 'ubuntu-24.04-arm' }}
 
-    ## Z3 4.3.x requires GCC ≤ 9 (C++ violations in mpq.h rejected by GCC 10+).
-    ## Run the entire job inside Ubuntu 20.04 (GCC 9) so the old code compiles.
-    ## Binaries built against glibc 2.31 (Ubuntu 20.04) are forward-compatible
-    ## with Ubuntu 22.04 (2.35) and 24.04 (2.39).
-    container: ubuntu:20.04
+    ## Z3 4.3.x requires GCC ≤ 7 (C++ violations in mpq.h rejected by GCC 8+, and
+    ## GCC 9's STL has range-for syntax that old Z3 macros corrupt).
+    ## Run inside Ubuntu 18.04 (GCC 7.5, Python 3.6) so the old code compiles.
+    ## Binaries built against glibc 2.27 (Ubuntu 18.04) run on 20.04/22.04/24.04.
+    container: ubuntu:18.04
 
     env:
       Z3_VERSION: ${{ inputs.z3_version || '4.3.1' }}
@@ -61,7 +61,7 @@ jobs:
     ## ── Dependencies ───────────────────────────────────────────────────────
     - name: Install build dependencies
       run: |
-        ## Running as root inside ubuntu:20.04 container — no sudo, GCC 9 is default.
+        ## Running as root inside ubuntu:18.04 container — no sudo, GCC 7 is default.
         apt-get update -qq
         DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-distutils 2to3 build-essential curl ca-certificates jq
         ## Install GitHub CLI (gh) for creating releases.
