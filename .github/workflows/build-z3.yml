@@ -67,22 +67,34 @@ jobs:
         echo "Source directory: $(ls -d z3-z3-*/)"
 
     ## ── Configure ──────────────────────────────────────────────────────────
-    - name: Convert Z3 build scripts to Python 3
+    - name: Prepare Z3 source for Python 3 build
       run: |
         cd "z3-z3-${{ env.Z3_VERSION }}"
-        2to3 -w scripts/ > /dev/null 2>&1
-        echo "2to3 complete."
 
-    - name: Fix source-file encoding
-      run: |
-        cd "z3-z3-${{ env.Z3_VERSION }}"
-        ## Some Z3 4.3.x C++ header files contain Latin-1/Windows-1252 bytes
-        ## (e.g. 0x96 em-dash in a comment).  Python 3 raises UnicodeDecodeError
-        ## when the build scripts scan those files.  Re-encode them as UTF-8 so
-        ## mk_make.py can read them without modification.
+        ## 1. Convert Python 2 syntax in build scripts and Python API.
+        ##    Also expand tabs (Python 3 disallows mixed tabs+spaces).
+        2to3 -w scripts/ src/api/python/ > /dev/null 2>&1
+        for f in scripts/*.py src/api/python/*.py; do
+            expand -t 8 "$f" > /tmp/pf && mv /tmp/pf "$f"
+        done
+
+        ## 2. Fix sorted(cnames, cmp=...) — 2to3 misses this cmp= form.
+        python3 -c "
+        import pathlib
+        p = pathlib.Path('scripts/mk_util.py')
+        t = p.read_text()
+        t = t.replace(
+            'return sorted(cnames, cmp=comp_components)',
+            'import functools; return sorted(cnames, key=functools.cmp_to_key(comp_components))'
+        )
+        p.write_text(t)
+        "
+
+        ## 3. Re-encode C++ source files that contain Latin-1 bytes so that
+        ##    mk_make.py can read them as UTF-8.
         python3 -c "
         import os, pathlib
-        converted = 0
+        n = 0
         for root, dirs, files in os.walk('.'):
             for fname in files:
                 if fname.endswith(('.h', '.cpp', '.cc', '.c')):
@@ -91,23 +103,29 @@ jobs:
                         p.read_text()
                     except UnicodeDecodeError:
                         p.write_text(p.read_text(encoding='latin-1'))
-                        print('Converted:', p)
-                        converted += 1
-        print(f'Done — {converted} file(s) re-encoded as UTF-8')
+                        n += 1
+        print(f'Re-encoded {n} file(s) as UTF-8')
         "
+
+        ## 4. Create scripts/config-release.mk (normally produced by ./configure
+        ##    from configure.ac, but the release archive only ships configure.ac).
+        ##    Values are set for Linux/GCC; -static-libstdc++ -static-libgcc give
+        ##    us the statically-linked C++ runtime we want.
+        printf '%s\n' \
+          'CC=gcc' 'PREFIX=/usr/local' 'CXX=g++' \
+          'CXXFLAGS= -c -O3 -D _EXTERNAL_RELEASE -fomit-frame-pointer' \
+          'CXX_OUT_FLAG=-o' 'OBJ_EXT=.o' 'LIB_EXT=.a' \
+          'AR=ar' 'AR_FLAGS=rcs' 'AR_OUTFLAG=' 'EXE_EXT=' \
+          'LINK=g++' 'LINK_FLAGS=-static-libstdc++ -static-libgcc' \
+          'LINK_OUT_FLAG=-o' 'LINK_EXTRA_FLAGS=-lpthread' \
+          'SO_EXT=.so' 'SLINK=g++' 'SLINK_FLAGS=-shared' \
+          'SLINK_EXTRA_FLAGS=' 'SLINK_OUT_FLAG=-o' \
+          > scripts/config-release.mk
 
     - name: Generate Z3 Makefile
       run: |
         cd "z3-z3-${{ env.Z3_VERSION }}"
-        set +e
-        python3 -W ignore::SyntaxWarning scripts/mk_make.py > /tmp/mk_out.txt 2>&1
-        ec=$?
-        echo '## mk_make.py output' >> "$GITHUB_STEP_SUMMARY"
-        echo '```' >> "$GITHUB_STEP_SUMMARY"
-        tail -60 /tmp/mk_out.txt >> "$GITHUB_STEP_SUMMARY"
-        echo '```' >> "$GITHUB_STEP_SUMMARY"
-        cat /tmp/mk_out.txt
-        exit $ec
+        python3 -W ignore::SyntaxWarning scripts/mk_make.py
 
         ## Inject static C++ runtime flags into the generated build.
         ## Z3 4.3.x uses a Python-generated Makefile; the link step for the
