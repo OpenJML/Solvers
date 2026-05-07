@@ -88,8 +88,6 @@ jobs:
       run: |
         ## Xcode command-line tools are pre-installed; ensure gh is available.
         brew install gh || true
-        ## Python 3.12+ removed distutils; Z3 4.3.1 build scripts use it.
-        pip3 install setuptools || true
         ## 2to3 ships with Python 3 on macOS.
         which 2to3 || pip3 install 2to3 || true
 
@@ -153,6 +151,19 @@ jobs:
                     p.write_text(new_t)
                     count += 1
         print(f'Stripped SAL annotations from {count} file(s)')
+        "
+
+        ## 1a. Replace distutils.sysconfig (removed in Python 3.12) with sysconfig.
+        python3 -c "
+        import pathlib
+        p = pathlib.Path('scripts/mk_util.py')
+        t = p.read_text(errors='replace')
+        t = t.replace('import distutils.sysconfig',
+                      'import sysconfig as _sysconfig_mod')
+        t = t.replace('distutils.sysconfig.get_python_lib()',
+                      '_sysconfig_mod.get_path(\"purelib\")')
+        p.write_text(t)
+        print('Patched distutils.sysconfig in mk_util.py')
         "
 
         ## 1. Convert Python 2 syntax; fix tab/space mixing.
