@@ -138,7 +138,20 @@ jobs:
         p.write_text(t)
         "
 
-        ## 3. Re-encode C++ source files that contain Latin-1 bytes so that
+        ## 3. Fix ARM64 type ambiguity in mpz.cpp:
+        ##    UINT64_MAX is 'unsigned long' on ARM64 but Z3's 'uint64' typedef is
+        ##    'unsigned long long' — both 64-bit but distinct types, creating an
+        ##    ambiguous overload for set(mpz&, ...).  Add explicit casts.
+        python3 -c "
+        import pathlib
+        p = pathlib.Path('src/util/mpz.cpp')
+        t = p.read_text(errors='replace')
+        t = t.replace('set(m_two64, UINT64_MAX)', 'set(m_two64, (uint64)UINT64_MAX)')
+        p.write_text(t)
+        print('Patched set(m_two64, UINT64_MAX) in mpz.cpp')
+        "
+
+        ## 4. Re-encode C++ source files that contain Latin-1 bytes so that
         ##    mk_make.py can read them as UTF-8.
         python3 -c "
         import os, pathlib
