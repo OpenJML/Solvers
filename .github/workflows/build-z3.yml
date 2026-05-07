@@ -35,11 +35,10 @@ jobs:
     ## Falls back to ARM64 defaults when triggered by a push (inputs are empty).
     runs-on: ${{ inputs.runner_os || 'ubuntu-24.04-arm' }}
 
-    ## Z3 4.3.x requires GCC ≤ 7 (C++ violations in mpq.h rejected by GCC 8+, and
-    ## GCC 9's STL has range-for syntax that old Z3 macros corrupt).
-    ## Run inside Ubuntu 18.04 (GCC 7.5, Python 3.6) so the old code compiles.
-    ## Binaries built against glibc 2.27 (Ubuntu 18.04) run on 20.04/22.04/24.04.
-    container: ubuntu:18.04
+    ## Z3 4.3.x requires GCC ≤ 9 (C++ violations in mpq.h rejected by GCC 10+).
+    ## Run inside Ubuntu 20.04 (GCC 9) — after patching util.h to not define
+    ## __in/__out macros on Linux (they conflict with GCC 9 STL variable names).
+    container: ubuntu:20.04
 
     env:
       Z3_VERSION: ${{ inputs.z3_version || '4.3.1' }}
@@ -61,7 +60,7 @@ jobs:
     ## ── Dependencies ───────────────────────────────────────────────────────
     - name: Install build dependencies
       run: |
-        ## Running as root inside ubuntu:18.04 container — no sudo, GCC 7 is default.
+        ## Running as root inside ubuntu:20.04 container — no sudo, GCC 9 is default.
         apt-get update -qq
         DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-distutils 2to3 build-essential curl ca-certificates jq
         ## Install GitHub CLI (gh) for creating releases.
@@ -84,6 +83,25 @@ jobs:
     - name: Prepare Z3 source for Python 3 build
       run: |
         cd "z3-z3-${{ env.Z3_VERSION }}"
+
+        ## 0. Patch src/util/util.h: Z3 4.3.1 defines __in and __out as empty
+        ##    macros (Windows SAL annotation stubs).  GCC 9's STL uses __in as
+        ##    a real variable name in algorithm templates, so the empty macro
+        ##    expansion silently corrupts the parse.  Guard these defines so they
+        ##    are only active on Windows (where SAL headers define them first).
+        python3 -c "
+        import pathlib
+        p = pathlib.Path('src/util/util.h')
+        t = p.read_text()
+        # Wrap the __in/__out/#ifndef block in a '#ifdef _WINDOWS' guard
+        old = '#ifndef __out\n#define __out\n#endif\n\n#ifndef __in\n#define __in\n#endif\n\n#ifndef __inout\n#define __inout\n#endif'
+        new = '#ifdef _WINDOWS\n' + old + '\n#endif'
+        if old in t:
+            p.write_text(t.replace(old, new))
+            print('Patched __in/__out macros in util.h')
+        else:
+            print('Pattern not found — check util.h manually')
+        "
 
         ## 1. Convert Python 2 syntax in build scripts and Python API.
         ##    Also expand tabs (Python 3 disallows mixed tabs+spaces).
