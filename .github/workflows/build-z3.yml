@@ -85,12 +85,17 @@ jobs:
       run: |
         cd "z3-z3-${{ env.Z3_VERSION }}"
 
-        ## 1. Convert Python 2 syntax in build scripts and Python API.
+        ## 1. Convert Python 2 syntax in build scripts.
         ##    Also expand tabs (Python 3 disallows mixed tabs+spaces).
-        2to3 -w scripts/ src/api/python/ > /dev/null 2>&1
-        for f in scripts/*.py src/api/python/*.py; do
+        2to3 -w scripts/ > /dev/null 2>&1
+        for f in scripts/*.py; do
             expand -t 8 "$f" > /tmp/pf && mv /tmp/pf "$f"
         done
+
+        ## Skip mk_bindings() — it compiles the Python API (z3printer.py etc.)
+        ## which has complex Python 2→3 issues.  We only need the z3 binary, not
+        ## the Python API.  Comment out the call so mk_makefile() still runs.
+        sed -i 's/^mk_bindings(API_files)/# mk_bindings(API_files)/' scripts/mk_make.py
 
         ## 2. Fix sorted(cnames, cmp=...) — 2to3 misses this cmp= form.
         python3 -c "
