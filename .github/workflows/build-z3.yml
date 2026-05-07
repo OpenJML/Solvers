@@ -56,7 +56,7 @@ jobs:
     - name: Install build dependencies
       run: |
         sudo apt-get update -qq
-        sudo apt-get install -y python3 2to3 build-essential
+        sudo apt-get install -y python3 2to3 build-essential gcc-12 g++-12
 
     ## ── Source ─────────────────────────────────────────────────────────────
     - name: Download Z3 source
@@ -112,13 +112,13 @@ jobs:
         ##    Values are set for Linux/GCC; -static-libstdc++ -static-libgcc give
         ##    us the statically-linked C++ runtime we want.
         printf '%s\n' \
-          'CC=gcc' 'PREFIX=/usr/local' 'CXX=g++' \
+          'CC=gcc-12' 'PREFIX=/usr/local' 'CXX=g++-12' \
           'CXXFLAGS= -c -O3 -D _EXTERNAL_RELEASE -D_NO_OMP_ -fomit-frame-pointer -fpermissive' \
           'CXX_OUT_FLAG=-o' 'OBJ_EXT=.o' 'LIB_EXT=.a' \
           'AR=ar' 'AR_FLAGS=rcs' 'AR_OUTFLAG=' 'EXE_EXT=' \
-          'LINK=g++' 'LINK_FLAGS=-static-libstdc++ -static-libgcc' \
+          'LINK=g++-12' 'LINK_FLAGS=-static-libstdc++ -static-libgcc' \
           'LINK_OUT_FLAG=-o' 'LINK_EXTRA_FLAGS=-lpthread' \
-          'SO_EXT=.so' 'SLINK=g++' 'SLINK_FLAGS=-shared' \
+          'SO_EXT=.so' 'SLINK=g++-12' 'SLINK_FLAGS=-shared' \
           'SLINK_EXTRA_FLAGS=' 'SLINK_OUT_FLAG=-o' \
           > scripts/config-release.mk
 
