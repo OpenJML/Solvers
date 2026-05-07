@@ -1,16 +1,21 @@
 name: Build Z3 Solver
 
-## Builds a Z3 binary from source and publishes it as a GitHub release asset.
+## Builds Z3 from source for multiple platforms and publishes each binary
+## as a GitHub release asset.  Z3 version is parameterised; defaults to 4.3.1.
 ##
-## Defaults target Ubuntu 24.04 ARM64, Z3 4.3.1.  Override all three
-## parameters via workflow_dispatch to build other OS/version combinations.
+## Matrix:
+##   ubuntu-arm64   — ubuntu-24.04-arm runner, ubuntu:20.04 container (GCC 9)
+##   ubuntu-x86_64  — ubuntu-24.04     runner, ubuntu:20.04 container (GCC 9)
+##   macos-arm64    — macos-14 runner, native Apple Clang (ARM64)
+##   macos-x86_64   — macos-14 runner, native Apple Clang via arch -x86_64 (Rosetta)
 ##
-## The release is tagged with the OS label, Z3 version, and a UTC timestamp
-## to the second so every run produces a fresh, uniquely-named release.
+## Z3 4.3.x requires GCC ≤ 9 on Linux (C++ violations in mpq.h rejected by
+## GCC 10+).  We run Linux jobs inside an ubuntu:20.04 container for GCC 9.
+## macOS uses Apple Clang which handles the old code differently (some
+## violations become warnings rather than errors with -fpermissive).
 ##
-## The C++ runtime (libstdc++, libgcc) is statically linked so the binary
-## runs on any ARM64 Linux with a compatible glibc.  Full static linking
-## (including glibc) is intentionally avoided to sidestep glibc ABI issues.
+## The release tag includes the OS label and a UTC timestamp so every push
+## produces a fresh, uniquely-named release.
 
 on:
   push:
@@ -18,31 +23,39 @@ on:
   workflow_dispatch:
     inputs:
       z3_version:
-        description: 'Z3 version to build (e.g. 4.3.1)'
+        description: 'Z3 version tag to build (e.g. 4.3.1)'
         required: true
         default: '4.3.1'
-      runner_os:
-        description: 'GitHub Actions runner label'
-        required: true
-        default: 'ubuntu-24.04-arm'
-      os_label:
-        description: 'OS label used in the asset filename and release tag'
-        required: true
-        default: 'ubuntu-arm64'
 
 jobs:
   build-z3:
-    ## Falls back to ARM64 defaults when triggered by a push (inputs are empty).
-    runs-on: ${{ inputs.runner_os || 'ubuntu-24.04-arm' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner:    ubuntu-24.04-arm
+            label:     ubuntu-arm64
+            container: ubuntu:20.04
+            arch_cmd:  ''
+          - runner:    ubuntu-24.04
+            label:     ubuntu-x86_64
+            container: ubuntu:20.04
+            arch_cmd:  ''
+          - runner:    macos-14
+            label:     macos-arm64
+            container: ''
+            arch_cmd:  ''
+          - runner:    macos-14
+            label:     macos-x86_64
+            container: ''
+            arch_cmd:  'arch -x86_64'
 
-    ## Z3 4.3.x requires GCC ≤ 9 (C++ violations in mpq.h rejected by GCC 10+).
-    ## Run inside Ubuntu 20.04 (GCC 9) — after patching util.h to not define
-    ## __in/__out macros on Linux (they conflict with GCC 9 STL variable names).
-    container: ubuntu:20.04
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
 
     env:
       Z3_VERSION: ${{ inputs.z3_version || '4.3.1' }}
-      OS_LABEL:   ${{ inputs.os_label   || 'ubuntu-arm64' }}
+      OS_LABEL:   ${{ matrix.label }}
 
     steps:
     ## ── Metadata ───────────────────────────────────────────────────────────
@@ -52,18 +65,17 @@ jobs:
         ts=$(date -u +%Y%m%d-%H%M%S)
         ver="${{ env.Z3_VERSION }}"
         os="${{ env.OS_LABEL }}"
-        echo "timestamp=$ts"                     >> "$GITHUB_OUTPUT"
-        echo "tag=z3-${ver}-${os}-${ts}"         >> "$GITHUB_OUTPUT"
-        echo "asset_name=z3-${ver}-${os}"        >> "$GITHUB_OUTPUT"
+        echo "tag=z3-${ver}-${os}-${ts}"     >> "$GITHUB_OUTPUT"
+        echo "asset_name=z3-${ver}-${os}"    >> "$GITHUB_OUTPUT"
         echo "title=Z3 ${ver} / ${os} / $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$GITHUB_OUTPUT"
 
     ## ── Dependencies ───────────────────────────────────────────────────────
-    - name: Install build dependencies
+    - name: Install build dependencies (Linux)
+      if: runner.os == 'Linux'
       run: |
-        ## Running as root inside ubuntu:20.04 container — no sudo, GCC 9 is default.
         apt-get update -qq
-        DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-distutils 2to3 build-essential curl ca-certificates jq
-        ## Install GitHub CLI (gh) for creating releases.
+        DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          python3 python3-distutils 2to3 build-essential curl ca-certificates jq
         curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
           | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
         echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
@@ -71,46 +83,46 @@ jobs:
         apt-get update -qq
         apt-get install -y gh
 
+    - name: Install build dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        ## Xcode command-line tools are pre-installed; ensure gh is available.
+        brew install gh || true
+        ## 2to3 is shipped with Python 3 on macOS; ensure it is on the PATH.
+        which 2to3 || pip3 install 2to3 || true
+
     ## ── Source ─────────────────────────────────────────────────────────────
     - name: Download Z3 source
       run: |
-        ver="${{ env.Z3_VERSION }}"
-        curl -fsSL "https://github.com/Z3Prover/z3/archive/refs/tags/z3-${ver}.tar.gz" \
+        curl -fsSL "https://github.com/Z3Prover/z3/archive/refs/tags/z3-${{ env.Z3_VERSION }}.tar.gz" \
              | tar xz
         echo "Source directory: $(ls -d z3-z3-*/)"
 
-    ## ── Configure ──────────────────────────────────────────────────────────
-    - name: Prepare Z3 source for Python 3 build
+    ## ── Patch ──────────────────────────────────────────────────────────────
+    - name: Patch Z3 source for Python 3 and platform compatibility
       run: |
         cd "z3-z3-${{ env.Z3_VERSION }}"
 
-        ## 0. Strip Windows SAL annotation macros (__in, __out, __inout) from
-        ##    ALL Z3 source files.  These expand to empty on Linux — removing
-        ##    them is semantically neutral but prevents GCC 9's STL from
-        ##    misinterpreting them when the same tokens appear as variable names
-        ##    inside <bits/stl_algo.h> and <utility>.
+        ## 0. Strip Windows SAL annotation macros (__in, __out, __inout).
+        ##    On Linux these expand to empty and conflict with GCC 9 STL variable
+        ##    names (stl_algo.h uses __in as a loop variable).  Removing them is
+        ##    semantically neutral since they always expand to nothing.
         python3 -c "
         import os, pathlib, re
         count = 0
         sal_names = ('__in', '__out', '__inout')
 
         def strip_sal(t):
-            # Step 1: remove the simple #ifndef/#define/#endif blocks entirely
             for name in sal_names:
                 block = '#ifndef %s\n#define %s\n#endif' % (name, name)
                 t = t.replace(block + '\n', '').replace(block, '')
-
-            # Step 2: process line by line
             lines = t.splitlines(keepends=True)
             new_lines = []
             for line in lines:
                 s = line.lstrip()
                 if s.startswith('#undef') or s.startswith('#ifndef') or s.startswith('#ifdef'):
-                    # Keep conditional/undef directives exactly — they check names
                     new_lines.append(line)
                 elif s.startswith('#define'):
-                    # Strip SAL names from the EXPANSION part of #define
-                    # (keep the macro name + args intact; strip from the body)
                     m = re.match(r'([ \t]*#define[ \t]+\w+(?:\([^)]*\))?)(.*)', line, re.DOTALL)
                     if m:
                         prefix, body = m.group(1), m.group(2)
@@ -120,7 +132,6 @@ jobs:
                     else:
                         new_lines.append(line)
                 else:
-                    # Non-directive: strip freely
                     for name in sal_names:
                         line = re.sub(r'\b' + re.escape(name) + r'\b', '', line)
                     new_lines.append(line)
@@ -142,16 +153,13 @@ jobs:
         print(f'Stripped SAL annotations from {count} file(s)')
         "
 
-        ## 1. Convert Python 2 syntax in build scripts and Python API.
-        ##    Also expand tabs (Python 3 disallows mixed tabs+spaces).
+        ## 1. Convert Python 2 syntax; fix tab/space mixing.
         2to3 -w scripts/ src/api/python/ > /dev/null 2>&1
         for f in scripts/*.py src/api/python/*.py; do
             expand -t 8 "$f" > /tmp/pf && mv /tmp/pf "$f"
         done
 
-        ## Strip mk_make.py down to just what is needed to generate the Linux
-        ## Makefile.  check_eol/update_version/mk_bindings/mk_vs_proj are all
-        ## Linux-irrelevant or require Python API files that we have not converted.
+        ## 2. Skip non-Linux Makefile targets from mk_make.py.
         python3 -c "
         import pathlib
         p = pathlib.Path('scripts/mk_make.py')
@@ -162,10 +170,9 @@ jobs:
                 for l in t.splitlines()
             )
         p.write_text(t)
-        print('mk_make.py stripped to essential calls')
         "
 
-        ## 2. Fix sorted(cnames, cmp=...) — 2to3 misses this cmp= form.
+        ## 3. Fix sorted(cnames, cmp=...) missed by 2to3.
         python3 -c "
         import pathlib
         p = pathlib.Path('scripts/mk_util.py')
@@ -177,49 +184,53 @@ jobs:
         p.write_text(t)
         "
 
-        ## 3. Create ARM64 stub for x86 SSE2 emmintrin.h.
-        ##    Z3 4.3.1 uses SSE2 intrinsics for scalar double FP operations.
-        ##    On ARM64 the hardware FP is IEEE 754 compliant; the stub maps
-        ##    each _mm_xxx_sd intrinsic to the equivalent C FP operation.
-        mkdir -p /tmp/stub_includes
-        printf '%s\n' \
-          '#pragma once' \
-          '/* ARM64 stub for x86 SSE2 scalar-double intrinsics */' \
-          '#include <fenv.h>' \
-          '#include <math.h>' \
-          'typedef double __m128d;' \
-          'static inline __m128d _mm_set_sd(double d){return d;}' \
-          'static inline void _mm_store_sd(double*p,__m128d m){*p=m;}' \
-          'static inline __m128d _mm_add_sd(__m128d a,__m128d b){return a+b;}' \
-          'static inline __m128d _mm_sub_sd(__m128d a,__m128d b){return a-b;}' \
-          'static inline __m128d _mm_mul_sd(__m128d a,__m128d b){return a*b;}' \
-          'static inline __m128d _mm_div_sd(__m128d a,__m128d b){return a/b;}' \
-          'static inline __m128d _mm_sqrt_pd(__m128d a){return sqrt(a);}' \
-          'static inline __m128d _mm_max_sd(__m128d a,__m128d b){return(a>b)?a:b;}' \
-          'static inline __m128d _mm_min_sd(__m128d a,__m128d b){return(a<b)?a:b;}' \
-          '#define _MM_ROUND_NEAREST     FE_TONEAREST' \
-          '#define _MM_ROUND_DOWN        FE_DOWNWARD' \
-          '#define _MM_ROUND_UP          FE_UPWARD' \
-          '#define _MM_ROUND_TOWARD_ZERO FE_TOWARDZERO' \
-          '#define _MM_SET_ROUNDING_MODE(x) fesetround(x)' \
-          > /tmp/stub_includes/emmintrin.h
-        echo "Created /tmp/stub_includes/emmintrin.h for ARM64"
+        ## 4. ARM64: create emmintrin.h stub (SSE2 header absent on ARM).
+        ##    On x86_64 (Linux and macOS) emmintrin.h exists natively.
+        arch=$(uname -m)
+        if [ "$arch" = "aarch64" ] || [ "$arch" = "arm64" ]; then
+            mkdir -p /tmp/stub_includes
+            printf '%s\n' \
+              '#pragma once' \
+              '/* ARM64 stub for x86 SSE2 scalar-double intrinsics */' \
+              '#include <fenv.h>' \
+              '#include <math.h>' \
+              'typedef double __m128d;' \
+              'static inline __m128d _mm_set_sd(double d){return d;}' \
+              'static inline void _mm_store_sd(double*p,__m128d m){*p=m;}' \
+              'static inline __m128d _mm_add_sd(__m128d a,__m128d b){return a+b;}' \
+              'static inline __m128d _mm_sub_sd(__m128d a,__m128d b){return a-b;}' \
+              'static inline __m128d _mm_mul_sd(__m128d a,__m128d b){return a*b;}' \
+              'static inline __m128d _mm_div_sd(__m128d a,__m128d b){return a/b;}' \
+              'static inline __m128d _mm_sqrt_pd(__m128d a){return sqrt(a);}' \
+              'static inline __m128d _mm_max_sd(__m128d a,__m128d b){return(a>b)?a:b;}' \
+              'static inline __m128d _mm_min_sd(__m128d a,__m128d b){return(a<b)?a:b;}' \
+              '#define _MM_ROUND_NEAREST     FE_TONEAREST' \
+              '#define _MM_ROUND_DOWN        FE_DOWNWARD' \
+              '#define _MM_ROUND_UP          FE_UPWARD' \
+              '#define _MM_ROUND_TOWARD_ZERO FE_TOWARDZERO' \
+              '#define _MM_SET_ROUNDING_MODE(x) fesetround(x)' \
+              > /tmp/stub_includes/emmintrin.h
+            echo "Created ARM64 emmintrin.h stub"
+            STUB_INC="-I/tmp/stub_includes"
+        else
+            STUB_INC=""
+        fi
 
-        ## Fix ARM64 type ambiguity in mpz.cpp:
-        ##    UINT64_MAX is 'unsigned long' on ARM64 but Z3's 'uint64' typedef is
-        ##    'unsigned long long' — both 64-bit but distinct types, creating an
-        ##    ambiguous overload for set(mpz&, ...).  Add explicit casts.
-        python3 -c "
+        ## 5. ARM64 Linux: cast UINT64_MAX to resolve overload ambiguity.
+        ##    On ARM64, UINT64_MAX is 'unsigned long' but uint64='unsigned long long';
+        ##    both are 64-bit but distinct types → ambiguous set() overload.
+        if [ "$(uname -m)" = "aarch64" ]; then
+            python3 -c "
         import pathlib
         p = pathlib.Path('src/util/mpz.cpp')
         t = p.read_text(errors='replace')
         t = t.replace('set(m_two64, UINT64_MAX)', 'set(m_two64, (uint64)UINT64_MAX)')
         p.write_text(t)
-        print('Patched set(m_two64, UINT64_MAX) in mpz.cpp')
-        "
+        print('Patched UINT64_MAX cast in mpz.cpp')
+            "
+        fi
 
-        ## 4. Re-encode C++ source files that contain Latin-1 bytes so that
-        ##    mk_make.py can read them as UTF-8.
+        ## 6. Re-encode any Latin-1 bytes in C++ source files to UTF-8.
         python3 -c "
         import os, pathlib
         n = 0
@@ -235,55 +246,62 @@ jobs:
         print(f'Re-encoded {n} file(s) as UTF-8')
         "
 
-        ## 4. Create scripts/config-release.mk (normally produced by ./configure
-        ##    from configure.ac, but the release archive only ships configure.ac).
-        ##    Values are set for Linux/GCC; -static-libstdc++ -static-libgcc give
-        ##    us the statically-linked C++ runtime we want.
-        printf '%s\n' \
-          'CC=gcc' 'PREFIX=/usr/local' 'CXX=g++' \
-          'CXXFLAGS= -c -O3 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL -I/tmp/stub_includes -fomit-frame-pointer' \
-          'CXX_OUT_FLAG=-o' 'OBJ_EXT=.o' 'LIB_EXT=.a' \
-          'AR=ar' 'AR_FLAGS=rcs' 'AR_OUTFLAG=' 'EXE_EXT=' \
-          'LINK=g++' 'LINK_FLAGS=-static-libstdc++ -static-libgcc' \
-          'LINK_OUT_FLAG=-o' 'LINK_EXTRA_FLAGS=-lpthread -lrt' \
-          'SO_EXT=.so' 'SLINK=g++' 'SLINK_FLAGS=-shared' \
-          'SLINK_EXTRA_FLAGS=' 'SLINK_OUT_FLAG=-o' \
-          > scripts/config-release.mk
+        ## 7. Generate scripts/config-release.mk with platform-specific values.
+        ##    Linux:  GCC, static C++ runtime, -lrt for POSIX timers.
+        ##    macOS:  Apple Clang, dynamic libs (macOS C++ runtime is part of OS).
+        ARCH_CMD="${{ matrix.arch_cmd }}"
+        if [ "$(uname)" = "Darwin" ]; then
+            CXX_CMD="clang++"
+            if [ -n "$ARCH_CMD" ]; then
+                CXX_CMD="$ARCH_CMD clang++"
+            fi
+            printf '%s\n' \
+              "CC=clang" "PREFIX=/usr/local" "CXX=clang++" \
+              "CXXFLAGS= -c -O2 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL ${STUB_INC} -fpermissive -Wno-c++11-extensions -fomit-frame-pointer" \
+              'CXX_OUT_FLAG=-o' 'OBJ_EXT=.o' 'LIB_EXT=.a' \
+              'AR=ar' 'AR_FLAGS=rcs' 'AR_OUTFLAG=' 'EXE_EXT=' \
+              'LINK=clang++' 'LINK_FLAGS=' \
+              'LINK_OUT_FLAG=-o' 'LINK_EXTRA_FLAGS=-lpthread' \
+              'SO_EXT=.dylib' 'SLINK=clang++' 'SLINK_FLAGS=-dynamiclib' \
+              'SLINK_EXTRA_FLAGS=' 'SLINK_OUT_FLAG=-o' \
+              > scripts/config-release.mk
+        else
+            printf '%s\n' \
+              'CC=gcc' 'PREFIX=/usr/local' 'CXX=g++' \
+              "CXXFLAGS= -c -O3 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL ${STUB_INC} -fomit-frame-pointer" \
+              'CXX_OUT_FLAG=-o' 'OBJ_EXT=.o' 'LIB_EXT=.a' \
+              'AR=ar' 'AR_FLAGS=rcs' 'AR_OUTFLAG=' 'EXE_EXT=' \
+              'LINK=g++' 'LINK_FLAGS=-static-libstdc++ -static-libgcc' \
+              'LINK_OUT_FLAG=-o' 'LINK_EXTRA_FLAGS=-lpthread -lrt' \
+              'SO_EXT=.so' 'SLINK=g++' 'SLINK_FLAGS=-shared' \
+              'SLINK_EXTRA_FLAGS=' 'SLINK_OUT_FLAG=-o' \
+              > scripts/config-release.mk
+        fi
+        echo "config-release.mk generated"
+        cat scripts/config-release.mk
 
+    ## ── Generate Makefile ─────────────────────────────────────────────────
     - name: Generate Z3 Makefile
       run: |
         cd "z3-z3-${{ env.Z3_VERSION }}"
         set +e
         python3 -W ignore::SyntaxWarning scripts/mk_make.py > /tmp/mk_out.txt 2>&1
         ec=$?
-        ## Grep for the exception and last traceback lines.
         { grep -E "MKException|Failed to find|Error:|Traceback|raise " /tmp/mk_out.txt 2>/dev/null || true; \
           tail -5 /tmp/mk_out.txt; } | sort -u | while IFS= read -r line; do
             echo "::error file=scripts/mk_make.py::$line"
         done
         set -e; exit $ec
 
-        ## Inject static C++ runtime flags into the generated build.
-        ## Z3 4.3.x uses a Python-generated Makefile; the link step for the
-        ## z3 binary matches the pattern below.  If a future Z3 version
-        ## generates a config.mk, append there instead:
-        ##   echo 'LINK_FLAGS += -static-libstdc++ -static-libgcc' >> build/config.mk
-        ##
-        ## We patch only the line that produces the z3 executable (matched by
-        ## '-o z3') to avoid affecting any shared-library link steps.
-        sed -i 's/-o z3\b/-o z3 -static-libstdc++ -static-libgcc/g' build/Makefile
-
-        echo "--- Patched link line ---"
-        grep -- '-o z3' build/Makefile || echo "(no match found — verify Makefile manually)"
-
     ## ── Build ──────────────────────────────────────────────────────────────
     - name: Build Z3
       run: |
+        ARCH_CMD="${{ matrix.arch_cmd }}"
+        JOBS=$(nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
         set +e
-        make -j$(nproc) -C "z3-z3-${{ env.Z3_VERSION }}/build" z3 > /tmp/build_out.txt 2>&1
+        $ARCH_CMD make -j"$JOBS" -C "z3-z3-${{ env.Z3_VERSION }}/build" z3 > /tmp/build_out.txt 2>&1
         ec=$?
-        ## Capture linker errors (undefined reference etc.)
-        grep -E "undefined reference|error:|ld returned" /tmp/build_out.txt \
+        grep -E "undefined reference|error:|ld returned|ld: error" /tmp/build_out.txt \
           | head -15 | while IFS= read -r line; do
             echo "::error::$line"
         done
@@ -292,37 +310,37 @@ jobs:
     ## ── Verify ─────────────────────────────────────────────────────────────
     - name: Verify binary
       run: |
-        ver="${{ env.Z3_VERSION }}"
-        binary="z3-z3-${ver}/build/z3"
-        echo "=== file type ==="
+        binary="z3-z3-${{ env.Z3_VERSION }}/build/z3"
+        echo "=== file type / size ==="
         file "$binary"
-        echo "=== size ==="
         ls -lh "$binary"
-        echo "=== dynamic library dependencies ==="
-        ldd "$binary" || echo "(static or ldd failed)"
+        echo "=== dynamic dependencies ==="
+        if command -v ldd > /dev/null 2>&1; then
+            ldd "$binary" || true
+        elif command -v otool > /dev/null 2>&1; then
+            otool -L "$binary"
+        fi
         echo "=== z3 version ==="
         "$binary" -version
 
-        echo "=== simple smoke test (SMTLIB2 check-sat → expected: sat) ==="
-        smoke_out=$(echo '(check-sat)' | timeout 10 "$binary" -smt2 -in 2>&1)
+        echo "=== smoke test: (check-sat) via temp file ==="
+        tmp=$(mktemp /tmp/z3_smoke_XXXXXX.smt2)
+        echo '(check-sat)' > "$tmp"
+        smoke_out=$(timeout 10 "$binary" -smt2 "$tmp" 2>&1)
+        rm -f "$tmp"
         echo "$smoke_out"
         if echo "$smoke_out" | grep -q "^ERROR"; then
-            echo "FAIL: z3 reported errors during smoke test"
+            echo "FAIL: z3 reported errors"
             exit 1
         fi
         if ! echo "$smoke_out" | grep -q "^sat"; then
-            echo "FAIL: expected 'sat' in output"
+            echo "FAIL: expected 'sat' in output, got: $smoke_out"
             exit 1
         fi
         echo "Smoke test passed"
 
-    ## ── Stage ──────────────────────────────────────────────────────────────
-    - name: Stage release asset
-      run: |
-        cp "z3-z3-${{ env.Z3_VERSION }}/build/z3" "${{ steps.meta.outputs.asset_name }}"
-
     ## ── Publish ────────────────────────────────────────────────────────────
-    - name: Create GitHub release and upload asset
+    - name: Stage and publish release asset
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
@@ -331,15 +349,13 @@ jobs:
         ver="${{ env.Z3_VERSION }}"
         os="${{ env.OS_LABEL }}"
 
-        ## Write release notes to a temp file to avoid YAML multi-line string
-        ## parsing issues (unindented lines inside a bash string confuse the
-        ## YAML block-scalar parser).
-        printf 'Z3 %s for %s\n\nBuilt: %s\nRunner: %s\nSource: %s\nLinking: %s\n' \
+        cp "z3-z3-${ver}/build/z3" "$asset"
+
+        printf 'Z3 %s for %s\n\nBuilt: %s\nRunner: %s / %s\nSource: %s\n' \
           "$ver" "$os" \
           "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" \
-          "${{ runner.os }} / ${{ runner.arch }}" \
+          "${{ runner.os }}" "${{ runner.arch }}" \
           "https://github.com/Z3Prover/z3/releases/tag/z3-${ver}" \
-          "C++ runtime statically linked (-static-libstdc++ -static-libgcc); glibc remains dynamic." \
           > /tmp/z3-release-notes.md
 
         gh release create "$tag" \
