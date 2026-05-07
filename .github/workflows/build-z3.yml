@@ -99,7 +99,7 @@ jobs:
         import pathlib
         p = pathlib.Path('scripts/mk_make.py')
         t = p.read_text()
-        for skip in ['check_eol()', 'update_version()', 'mk_bindings(API_files)',
+        for skip in ['check_eol()', 'mk_bindings(API_files)',
                      'mk_vs_proj(']:
             t = '\n'.join(
                 ('# ' + l if l.strip().startswith(skip.split('(')[0]) else l)
