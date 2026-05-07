@@ -121,15 +121,19 @@ jobs:
         ver="${{ env.Z3_VERSION }}"
         os="${{ env.OS_LABEL }}"
 
-        notes="Z3 ${ver} for ${os}
-
-Built: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-Runner: ${{ runner.os }} / ${{ runner.arch }}
-Source: https://github.com/Z3Prover/z3/releases/tag/z3-${ver}
-Linking: C++ runtime statically linked (-static-libstdc++ -static-libgcc); glibc remains dynamic."
+        ## Write release notes to a temp file to avoid YAML multi-line string
+        ## parsing issues (unindented lines inside a bash string confuse the
+        ## YAML block-scalar parser).
+        printf 'Z3 %s for %s\n\nBuilt: %s\nRunner: %s\nSource: %s\nLinking: %s\n' \
+          "$ver" "$os" \
+          "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" \
+          "${{ runner.os }} / ${{ runner.arch }}" \
+          "https://github.com/Z3Prover/z3/releases/tag/z3-${ver}" \
+          "C++ runtime statically linked (-static-libstdc++ -static-libgcc); glibc remains dynamic." \
+          > /tmp/z3-release-notes.md
 
         gh release create "$tag" \
           --repo "${{ github.repository }}" \
           --title "${{ steps.meta.outputs.title }}" \
-          --notes "$notes" \
+          --notes-file /tmp/z3-release-notes.md \
           "${asset}#${asset}"
