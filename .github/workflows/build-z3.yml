@@ -142,33 +142,29 @@ jobs:
         ##    Z3 4.3.1 uses SSE2 intrinsics for scalar double FP operations.
         ##    On ARM64 the hardware FP is IEEE 754 compliant; the stub maps
         ##    each _mm_xxx_sd intrinsic to the equivalent C FP operation.
-        python3 -c "
-        import pathlib
-        d = pathlib.Path('/tmp/stub_includes')
-        d.mkdir(exist_ok=True)
-        (d / 'emmintrin.h').write_text(r'''
-#pragma once
-/* ARM64 stub: maps x86 SSE2 scalar-double intrinsics to C FP */
-#include <fenv.h>
-#include <math.h>
-typedef double __m128d;
-static inline __m128d _mm_set_sd(double d) { return d; }
-static inline void _mm_store_sd(double *p, __m128d m) { *p = m; }
-static inline __m128d _mm_add_sd(__m128d a, __m128d b) { return a + b; }
-static inline __m128d _mm_sub_sd(__m128d a, __m128d b) { return a - b; }
-static inline __m128d _mm_mul_sd(__m128d a, __m128d b) { return a * b; }
-static inline __m128d _mm_div_sd(__m128d a, __m128d b) { return a / b; }
-static inline __m128d _mm_sqrt_pd(__m128d a) { return sqrt(a); }
-static inline __m128d _mm_max_sd(__m128d a, __m128d b) { return (a>b)?a:b; }
-static inline __m128d _mm_min_sd(__m128d a, __m128d b) { return (a<b)?a:b; }
-#define _MM_ROUND_NEAREST     FE_TONEAREST
-#define _MM_ROUND_DOWN        FE_DOWNWARD
-#define _MM_ROUND_UP          FE_UPWARD
-#define _MM_ROUND_TOWARD_ZERO FE_TOWARDZERO
-#define _MM_SET_ROUNDING_MODE(x) fesetround(x)
-''')
-        print('Created /tmp/stub_includes/emmintrin.h for ARM64')
-        "
+        mkdir -p /tmp/stub_includes
+        printf '%s\n' \
+          '#pragma once' \
+          '/* ARM64 stub for x86 SSE2 scalar-double intrinsics */' \
+          '#include <fenv.h>' \
+          '#include <math.h>' \
+          'typedef double __m128d;' \
+          'static inline __m128d _mm_set_sd(double d){return d;}' \
+          'static inline void _mm_store_sd(double*p,__m128d m){*p=m;}' \
+          'static inline __m128d _mm_add_sd(__m128d a,__m128d b){return a+b;}' \
+          'static inline __m128d _mm_sub_sd(__m128d a,__m128d b){return a-b;}' \
+          'static inline __m128d _mm_mul_sd(__m128d a,__m128d b){return a*b;}' \
+          'static inline __m128d _mm_div_sd(__m128d a,__m128d b){return a/b;}' \
+          'static inline __m128d _mm_sqrt_pd(__m128d a){return sqrt(a);}' \
+          'static inline __m128d _mm_max_sd(__m128d a,__m128d b){return(a>b)?a:b;}' \
+          'static inline __m128d _mm_min_sd(__m128d a,__m128d b){return(a<b)?a:b;}' \
+          '#define _MM_ROUND_NEAREST     FE_TONEAREST' \
+          '#define _MM_ROUND_DOWN        FE_DOWNWARD' \
+          '#define _MM_ROUND_UP          FE_UPWARD' \
+          '#define _MM_ROUND_TOWARD_ZERO FE_TOWARDZERO' \
+          '#define _MM_SET_ROUNDING_MODE(x) fesetround(x)' \
+          > /tmp/stub_includes/emmintrin.h
+        echo "Created /tmp/stub_includes/emmintrin.h for ARM64"
 
         ## Fix ARM64 type ambiguity in mpz.cpp:
         ##    UINT64_MAX is 'unsigned long' on ARM64 but Z3's 'uint64' typedef is
