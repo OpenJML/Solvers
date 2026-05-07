@@ -300,10 +300,10 @@ jobs:
         ls -lh "$binary"
         echo "=== dynamic library dependencies ==="
         ldd "$binary" || echo "(static or ldd failed)"
-        echo "=== z3 version (exit code is informational) ==="
-        "$binary" --version || echo "z3 --version exited with code $?"
-        echo "=== simple smoke test ==="
-        echo "(check-sat)" | "$binary" || echo "z3 basic run exited with $?"
+        echo "=== z3 version ==="
+        "$binary" -version
+        echo "=== simple smoke test (SAT) ==="
+        echo "(check-sat)" | "$binary" -in
 
     ## ── Stage ──────────────────────────────────────────────────────────────
     - name: Stage release asset
