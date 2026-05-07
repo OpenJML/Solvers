@@ -35,6 +35,12 @@ jobs:
     ## Falls back to ARM64 defaults when triggered by a push (inputs are empty).
     runs-on: ${{ inputs.runner_os || 'ubuntu-24.04-arm' }}
 
+    ## Z3 4.3.x requires GCC ≤ 9 (C++ violations in mpq.h rejected by GCC 10+).
+    ## Run the entire job inside Ubuntu 20.04 (GCC 9) so the old code compiles.
+    ## Binaries built against glibc 2.31 (Ubuntu 20.04) are forward-compatible
+    ## with Ubuntu 22.04 (2.35) and 24.04 (2.39).
+    container: ubuntu:20.04
+
     env:
       Z3_VERSION: ${{ inputs.z3_version || '4.3.1' }}
       OS_LABEL:   ${{ inputs.os_label   || 'ubuntu-arm64' }}
@@ -55,8 +61,16 @@ jobs:
     ## ── Dependencies ───────────────────────────────────────────────────────
     - name: Install build dependencies
       run: |
-        sudo apt-get update -qq
-        sudo apt-get install -y python3 2to3 build-essential gcc-11 g++-11
+        ## Running as root inside ubuntu:20.04 container — no sudo, GCC 9 is default.
+        apt-get update -qq
+        DEBIAN_FRONTEND=noninteractive apt-get install -y python3 2to3 build-essential curl ca-certificates jq
+        ## Install GitHub CLI (gh) for creating releases.
+        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+          | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+          > /etc/apt/sources.list.d/github-cli.list
+        apt-get update -qq
+        apt-get install -y gh
 
     ## ── Source ─────────────────────────────────────────────────────────────
     - name: Download Z3 source
@@ -112,13 +126,13 @@ jobs:
         ##    Values are set for Linux/GCC; -static-libstdc++ -static-libgcc give
         ##    us the statically-linked C++ runtime we want.
         printf '%s\n' \
-          'CC=gcc-11' 'PREFIX=/usr/local' 'CXX=g++-11' \
-          'CXXFLAGS= -c -O3 -D _EXTERNAL_RELEASE -D_NO_OMP_ -fomit-frame-pointer -fpermissive' \
+          'CC=gcc' 'PREFIX=/usr/local' 'CXX=g++' \
+          'CXXFLAGS= -c -O3 -D _EXTERNAL_RELEASE -D_NO_OMP_ -fomit-frame-pointer' \
           'CXX_OUT_FLAG=-o' 'OBJ_EXT=.o' 'LIB_EXT=.a' \
           'AR=ar' 'AR_FLAGS=rcs' 'AR_OUTFLAG=' 'EXE_EXT=' \
-          'LINK=g++-11' 'LINK_FLAGS=-static-libstdc++ -static-libgcc' \
+          'LINK=g++' 'LINK_FLAGS=-static-libstdc++ -static-libgcc' \
           'LINK_OUT_FLAG=-o' 'LINK_EXTRA_FLAGS=-lpthread' \
-          'SO_EXT=.so' 'SLINK=g++-11' 'SLINK_FLAGS=-shared' \
+          'SO_EXT=.so' 'SLINK=g++' 'SLINK_FLAGS=-shared' \
           'SLINK_EXTRA_FLAGS=' 'SLINK_OUT_FLAG=-o' \
           > scripts/config-release.mk
 
@@ -143,15 +157,7 @@ jobs:
     ## ── Build ──────────────────────────────────────────────────────────────
     - name: Build Z3
       run: |
-        ver="${{ env.Z3_VERSION }}"
-        set +e
-        make -j$(nproc) -C "z3-z3-${ver}/build" z3 2>&1 | tee /tmp/build_out.txt
-        ec=${PIPESTATUS[0]}
-        echo '## make output (last 60 lines)' >> "$GITHUB_STEP_SUMMARY"
-        echo '```' >> "$GITHUB_STEP_SUMMARY"
-        tail -60 /tmp/build_out.txt >> "$GITHUB_STEP_SUMMARY"
-        echo '```' >> "$GITHUB_STEP_SUMMARY"
-        exit $ec
+        make -j$(nproc) -C "z3-z3-${{ env.Z3_VERSION }}/build" z3
 
     ## ── Verify ─────────────────────────────────────────────────────────────
     - name: Verify binary
