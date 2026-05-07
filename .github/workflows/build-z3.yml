@@ -93,6 +93,39 @@ jobs:
         import os, pathlib, re
         count = 0
         sal_names = ('__in', '__out', '__inout')
+
+        def strip_sal(t):
+            # Step 1: remove the simple #ifndef/#define/#endif blocks entirely
+            for name in sal_names:
+                block = '#ifndef %s\n#define %s\n#endif' % (name, name)
+                t = t.replace(block + '\n', '').replace(block, '')
+
+            # Step 2: process line by line
+            lines = t.splitlines(keepends=True)
+            new_lines = []
+            for line in lines:
+                s = line.lstrip()
+                if s.startswith('#undef') or s.startswith('#ifndef') or s.startswith('#ifdef'):
+                    # Keep conditional/undef directives exactly — they check names
+                    new_lines.append(line)
+                elif s.startswith('#define'):
+                    # Strip SAL names from the EXPANSION part of #define
+                    # (keep the macro name + args intact; strip from the body)
+                    m = re.match(r'([ \t]*#define[ \t]+\w+(?:\([^)]*\))?)(.*)', line, re.DOTALL)
+                    if m:
+                        prefix, body = m.group(1), m.group(2)
+                        for name in sal_names:
+                            body = re.sub(r'\b' + re.escape(name) + r'\b', '', body)
+                        new_lines.append(prefix + body)
+                    else:
+                        new_lines.append(line)
+                else:
+                    # Non-directive: strip freely
+                    for name in sal_names:
+                        line = re.sub(r'\b' + re.escape(name) + r'\b', '', line)
+                    new_lines.append(line)
+            return ''.join(new_lines)
+
         for root, dirs, files in os.walk('src'):
             for fname in files:
                 if not fname.endswith(('.h', '.cpp', '.cc', '.c')):
@@ -102,26 +135,9 @@ jobs:
                     t = p.read_text(errors='replace')
                 except Exception:
                     continue
-                orig = t
-                # Step 1: remove the #ifndef/__define/#endif blocks entirely
-                for name in sal_names:
-                    block = '#ifndef %s\n#define %s\n#endif' % (name, name)
-                    t = t.replace(block + '\n', '').replace(block, '')
-                # Step 2: remove usage occurrences from non-directive lines only
-                # (leave #undef/__define lines untouched so they keep their names)
-                lines = t.splitlines(keepends=True)
-                new_lines = []
-                for line in lines:
-                    s = line.lstrip()
-                    if s.startswith('#'):
-                        new_lines.append(line)  # keep directives intact
-                    else:
-                        for name in sal_names:
-                            line = re.sub(r'\b' + re.escape(name) + r'\b', '', line)
-                        new_lines.append(line)
-                t = ''.join(new_lines)
-                if t != orig:
-                    p.write_text(t)
+                new_t = strip_sal(t)
+                if new_t != t:
+                    p.write_text(new_t)
                     count += 1
         print(f'Stripped SAL annotations from {count} file(s)')
         "
