@@ -62,7 +62,7 @@ jobs:
       run: |
         ## Running as root inside ubuntu:20.04 container — no sudo, GCC 9 is default.
         apt-get update -qq
-        DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-distutils 2to3 build-essential libgmp-dev curl ca-certificates jq
+        DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-distutils 2to3 build-essential curl ca-certificates jq
         ## Install GitHub CLI (gh) for creating releases.
         curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
           | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
@@ -161,11 +161,11 @@ jobs:
         ##    us the statically-linked C++ runtime we want.
         printf '%s\n' \
           'CC=gcc' 'PREFIX=/usr/local' 'CXX=g++' \
-          'CXXFLAGS= -c -O3 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_GMP -fomit-frame-pointer' \
+          'CXXFLAGS= -c -O3 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL -fomit-frame-pointer' \
           'CXX_OUT_FLAG=-o' 'OBJ_EXT=.o' 'LIB_EXT=.a' \
           'AR=ar' 'AR_FLAGS=rcs' 'AR_OUTFLAG=' 'EXE_EXT=' \
           'LINK=g++' 'LINK_FLAGS=-static-libstdc++ -static-libgcc' \
-          'LINK_OUT_FLAG=-o' 'LINK_EXTRA_FLAGS=-lpthread -lgmp' \
+          'LINK_OUT_FLAG=-o' 'LINK_EXTRA_FLAGS=-lpthread' \
           'SO_EXT=.so' 'SLINK=g++' 'SLINK_FLAGS=-shared' \
           'SLINK_EXTRA_FLAGS=' 'SLINK_OUT_FLAG=-o' \
           > scripts/config-release.mk
