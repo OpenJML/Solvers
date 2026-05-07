@@ -48,9 +48,12 @@ jobs:
         title="Z3 ${ver} — $(date -u '+%Y-%m-%d %H:%M UTC')"
         echo "tag=$tag"     >> "$GITHUB_OUTPUT"
         echo "title=$title" >> "$GITHUB_OUTPUT"
+        ## Create as a draft so it is invisible until all builds succeed.
+        ## The 'finalize' job publishes it once every platform has uploaded.
         gh release create "$tag" \
           --repo "${{ github.repository }}" \
           --title "$title" \
+          --draft \
           --notes "Z3 ${ver} binaries for ubuntu-arm64, ubuntu-x86_64, macos-arm64, macos-x86_64. Built from https://github.com/Z3Prover/z3/releases/tag/z3-${ver}."
 
   ## ── Build matrix ─────────────────────────────────────────────────────────
@@ -410,3 +413,17 @@ jobs:
         gh release upload "${{ needs.prepare.outputs.tag }}" \
           --repo "${{ github.repository }}" \
           "${asset}#${asset}"
+
+  ## ── Publish draft once all builds succeed ────────────────────────────────
+  finalize:
+    needs: [ prepare, build-z3 ]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+    - name: Publish release
+      run: |
+        gh release edit "${{ needs.prepare.outputs.tag }}" \
+          --repo "${{ github.repository }}" \
+          --draft=false
+        echo "Published: ${{ needs.prepare.outputs.tag }}"
