@@ -92,10 +92,22 @@ jobs:
             expand -t 8 "$f" > /tmp/pf && mv /tmp/pf "$f"
         done
 
-        ## Skip mk_bindings() — it compiles the Python API (z3printer.py etc.)
-        ## which has complex Python 2→3 issues.  We only need the z3 binary, not
-        ## the Python API.  Comment out the call so mk_makefile() still runs.
-        sed -i 's/^mk_bindings(API_files)/# mk_bindings(API_files)/' scripts/mk_make.py
+        ## Strip mk_make.py down to just what is needed to generate the Linux
+        ## Makefile.  check_eol/update_version/mk_bindings/mk_vs_proj are all
+        ## Linux-irrelevant or require Python API files that we have not converted.
+        python3 -c "
+        import pathlib
+        p = pathlib.Path('scripts/mk_make.py')
+        t = p.read_text()
+        for skip in ['check_eol()', 'update_version()', 'mk_bindings(API_files)',
+                     'mk_vs_proj(']:
+            t = '\n'.join(
+                ('# ' + l if l.strip().startswith(skip.split('(')[0]) else l)
+                for l in t.splitlines()
+            )
+        p.write_text(t)
+        print('mk_make.py stripped to essential calls')
+        "
 
         ## 2. Fix sorted(cnames, cmp=...) — 2to3 misses this cmp= form.
         python3 -c "
