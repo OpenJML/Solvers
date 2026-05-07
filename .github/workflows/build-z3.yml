@@ -159,11 +159,11 @@ jobs:
         set +e
         python3 -W ignore::SyntaxWarning scripts/mk_make.py > /tmp/mk_out.txt 2>&1
         ec=$?
-        echo "### mk_make.py exit: $ec" >> "$GITHUB_STEP_SUMMARY"
-        echo '```' >> "$GITHUB_STEP_SUMMARY"
-        cat /tmp/mk_out.txt >> "$GITHUB_STEP_SUMMARY"
-        echo '```' >> "$GITHUB_STEP_SUMMARY"
-        cat /tmp/mk_out.txt
+        ## Emit last 15 lines as workflow annotations so they appear in the
+        ## check-run annotations API (visible without log access).
+        tail -15 /tmp/mk_out.txt | while IFS= read -r line; do
+            echo "::error file=scripts/mk_make.py::$line"
+        done
         set -e; exit $ec
 
         ## Inject static C++ runtime flags into the generated build.
