@@ -88,7 +88,9 @@ jobs:
       run: |
         ## Xcode command-line tools are pre-installed; ensure gh is available.
         brew install gh || true
-        ## 2to3 is shipped with Python 3 on macOS; ensure it is on the PATH.
+        ## Python 3.12+ removed distutils; Z3 4.3.1 build scripts use it.
+        pip3 install setuptools || true
+        ## 2to3 ships with Python 3 on macOS.
         which 2to3 || pip3 install 2to3 || true
 
     ## ── Source ─────────────────────────────────────────────────────────────
@@ -216,10 +218,11 @@ jobs:
             STUB_INC=""
         fi
 
-        ## 5. ARM64 Linux: cast UINT64_MAX to resolve overload ambiguity.
-        ##    On ARM64, UINT64_MAX is 'unsigned long' but uint64='unsigned long long';
-        ##    both are 64-bit but distinct types → ambiguous set() overload.
-        if [ "$(uname -m)" = "aarch64" ]; then
+        ## 5. Linux: cast UINT64_MAX to resolve overload ambiguity.
+        ##    On Linux (both x86_64 and arm64), UINT64_MAX is 'unsigned long'
+        ##    but Z3's uint64 = 'unsigned long long' — both 64-bit but distinct
+        ##    types, creating ambiguous set(mpz&, ...) overloads.
+        if [ "$(uname)" = "Linux" ]; then
             python3 -c "
         import pathlib
         p = pathlib.Path('src/util/mpz.cpp')
@@ -325,7 +328,7 @@ jobs:
 
         echo "=== smoke test: (check-sat) via temp file ==="
         tmp=$(mktemp /tmp/z3_smoke_XXXXXX.smt2)
-        echo '(check-sat)' > "$tmp"
+        printf '(check-sat)\n(exit)\n' > "$tmp"
         smoke_out=$(timeout 10 "$binary" -smt2 "$tmp" 2>&1)
         rm -f "$tmp"
         echo "$smoke_out"
