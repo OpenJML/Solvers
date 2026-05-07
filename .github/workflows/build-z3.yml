@@ -159,9 +159,9 @@ jobs:
         set +e
         python3 -W ignore::SyntaxWarning scripts/mk_make.py > /tmp/mk_out.txt 2>&1
         ec=$?
-        ## Emit last 15 lines as workflow annotations so they appear in the
-        ## check-run annotations API (visible without log access).
-        tail -15 /tmp/mk_out.txt | while IFS= read -r line; do
+        ## Grep for the exception and last traceback lines.
+        { grep -E "MKException|Failed to find|Error:|Traceback|raise " /tmp/mk_out.txt 2>/dev/null || true; \
+          tail -5 /tmp/mk_out.txt; } | sort -u | while IFS= read -r line; do
             echo "::error file=scripts/mk_make.py::$line"
         done
         set -e; exit $ec
