@@ -92,6 +92,7 @@ jobs:
         python3 -c "
         import os, pathlib, re
         count = 0
+        sal_names = ('__in', '__out', '__inout')
         for root, dirs, files in os.walk('src'):
             for fname in files:
                 if not fname.endswith(('.h', '.cpp', '.cc', '.c')):
@@ -101,16 +102,26 @@ jobs:
                     t = p.read_text(errors='replace')
                 except Exception:
                     continue
-                # Remove the macro definition blocks
-                for name in ('__in', '__out', '__inout'):
+                orig = t
+                # Step 1: remove the #ifndef/__define/#endif blocks entirely
+                for name in sal_names:
                     block = '#ifndef %s\n#define %s\n#endif' % (name, name)
                     t = t.replace(block + '\n', '').replace(block, '')
-                # Remove usages: the token when followed by whitespace before a type
-                new_t = re.sub(r'\b__in\b', '', t)
-                new_t = re.sub(r'\b__out\b', '', new_t)
-                new_t = re.sub(r'\b__inout\b', '', new_t)
-                if new_t != t:
-                    p.write_text(new_t)
+                # Step 2: remove usage occurrences from non-directive lines only
+                # (leave #undef/__define lines untouched so they keep their names)
+                lines = t.splitlines(keepends=True)
+                new_lines = []
+                for line in lines:
+                    s = line.lstrip()
+                    if s.startswith('#'):
+                        new_lines.append(line)  # keep directives intact
+                    else:
+                        for name in sal_names:
+                            line = re.sub(r'\b' + re.escape(name) + r'\b', '', line)
+                        new_lines.append(line)
+                t = ''.join(new_lines)
+                if t != orig:
+                    p.write_text(t)
                     count += 1
         print(f'Stripped SAL annotations from {count} file(s)')
         "
