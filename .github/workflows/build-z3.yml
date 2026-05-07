@@ -1,0 +1,135 @@
+name: Build Z3 Solver
+
+## Builds a Z3 binary from source and publishes it as a GitHub release asset.
+##
+## Defaults target Ubuntu 24.04 ARM64, Z3 4.3.1.  Override all three
+## parameters via workflow_dispatch to build other OS/version combinations.
+##
+## The release is tagged with the OS label, Z3 version, and a UTC timestamp
+## to the second so every run produces a fresh, uniquely-named release.
+##
+## The C++ runtime (libstdc++, libgcc) is statically linked so the binary
+## runs on any ARM64 Linux with a compatible glibc.  Full static linking
+## (including glibc) is intentionally avoided to sidestep glibc ABI issues.
+
+on:
+  push:
+    branches: [ build ]
+  workflow_dispatch:
+    inputs:
+      z3_version:
+        description: 'Z3 version to build (e.g. 4.3.1)'
+        required: true
+        default: '4.3.1'
+      runner_os:
+        description: 'GitHub Actions runner label'
+        required: true
+        default: 'ubuntu-24.04-arm'
+      os_label:
+        description: 'OS label used in the asset filename and release tag'
+        required: true
+        default: 'ubuntu-arm64'
+
+jobs:
+  build-z3:
+    ## Falls back to ARM64 defaults when triggered by a push (inputs are empty).
+    runs-on: ${{ inputs.runner_os || 'ubuntu-24.04-arm' }}
+
+    env:
+      Z3_VERSION: ${{ inputs.z3_version || '4.3.1' }}
+      OS_LABEL:   ${{ inputs.os_label   || 'ubuntu-arm64' }}
+
+    steps:
+    ## ── Metadata ───────────────────────────────────────────────────────────
+    - name: Set build metadata
+      id: meta
+      run: |
+        ts=$(date -u +%Y%m%d-%H%M%S)
+        ver="${{ env.Z3_VERSION }}"
+        os="${{ env.OS_LABEL }}"
+        echo "timestamp=$ts"                     >> "$GITHUB_OUTPUT"
+        echo "tag=z3-${ver}-${os}-${ts}"         >> "$GITHUB_OUTPUT"
+        echo "asset_name=z3-${ver}-${os}"        >> "$GITHUB_OUTPUT"
+        echo "title=Z3 ${ver} / ${os} / $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$GITHUB_OUTPUT"
+
+    ## ── Dependencies ───────────────────────────────────────────────────────
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y python3 build-essential
+
+    ## ── Source ─────────────────────────────────────────────────────────────
+    - name: Download Z3 source
+      run: |
+        ver="${{ env.Z3_VERSION }}"
+        curl -fsSL "https://github.com/Z3Prover/z3/archive/refs/tags/z3-${ver}.tar.gz" \
+             | tar xz
+        echo "Source directory: $(ls -d z3-z3-*/)"
+
+    ## ── Configure ──────────────────────────────────────────────────────────
+    - name: Configure Z3 build
+      run: |
+        ver="${{ env.Z3_VERSION }}"
+        cd "z3-z3-${ver}"
+
+        ## --noomp: disables OpenMP, which simplifies static linking.
+        python3 scripts/mk_make.py --noomp
+
+        ## Inject static C++ runtime flags into the generated build.
+        ## Z3 4.3.x uses a Python-generated Makefile; the link step for the
+        ## z3 binary matches the pattern below.  If a future Z3 version
+        ## generates a config.mk, append there instead:
+        ##   echo 'LINK_FLAGS += -static-libstdc++ -static-libgcc' >> build/config.mk
+        ##
+        ## We patch only the line that produces the z3 executable (matched by
+        ## '-o z3') to avoid affecting any shared-library link steps.
+        sed -i 's/-o z3\b/-o z3 -static-libstdc++ -static-libgcc/g' build/Makefile
+
+        echo "--- Patched link line ---"
+        grep -- '-o z3' build/Makefile || echo "(no match found — verify Makefile manually)"
+
+    ## ── Build ──────────────────────────────────────────────────────────────
+    - name: Build Z3
+      run: |
+        ver="${{ env.Z3_VERSION }}"
+        make -j$(nproc) -C "z3-z3-${ver}/build" z3
+
+    ## ── Verify ─────────────────────────────────────────────────────────────
+    - name: Verify binary
+      run: |
+        ver="${{ env.Z3_VERSION }}"
+        binary="z3-z3-${ver}/build/z3"
+        echo "=== file type ==="
+        file "$binary"
+        echo "=== dynamic library dependencies (glibc only expected) ==="
+        ldd "$binary" || echo "(fully static — ldd returned non-zero)"
+        echo "=== z3 self-report ==="
+        "$binary" --version
+
+    ## ── Stage ──────────────────────────────────────────────────────────────
+    - name: Stage release asset
+      run: |
+        cp "z3-z3-${{ env.Z3_VERSION }}/build/z3" "${{ steps.meta.outputs.asset_name }}"
+
+    ## ── Publish ────────────────────────────────────────────────────────────
+    - name: Create GitHub release and upload asset
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        tag="${{ steps.meta.outputs.tag }}"
+        asset="${{ steps.meta.outputs.asset_name }}"
+        ver="${{ env.Z3_VERSION }}"
+        os="${{ env.OS_LABEL }}"
+
+        notes="Z3 ${ver} for ${os}
+
+Built: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+Runner: ${{ runner.os }} / ${{ runner.arch }}
+Source: https://github.com/Z3Prover/z3/releases/tag/z3-${ver}
+Linking: C++ runtime statically linked (-static-libstdc++ -static-libgcc); glibc remains dynamic."
+
+        gh release create "$tag" \
+          --repo "${{ github.repository }}" \
+          --title "${{ steps.meta.outputs.title }}" \
+          --notes "$notes" \
+          "${asset}#${asset}"
