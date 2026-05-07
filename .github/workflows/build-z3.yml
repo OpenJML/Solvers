@@ -77,7 +77,10 @@ jobs:
         2to3 -w scripts/ > /dev/null 2>&1
 
         ## --noomp: disables OpenMP, which simplifies static linking.
-        python3 scripts/mk_make.py --noomp
+        ## -W ignore::SyntaxWarning suppresses invalid-escape-sequence warnings
+        ## in Z3 4.3.x string literals that 2to3 does not fix (they are
+        ## harmless on Python 3.12 but noisy and may be errors on 3.14+).
+        python3 -W ignore::SyntaxWarning scripts/mk_make.py --noomp
 
         ## Inject static C++ runtime flags into the generated build.
         ## Z3 4.3.x uses a Python-generated Makefile; the link step for the
