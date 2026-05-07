@@ -14,8 +14,9 @@ name: Build Z3 Solver
 ## macOS uses Apple Clang which handles the old code differently (some
 ## violations become warnings rather than errors with -fpermissive).
 ##
-## The release tag includes the OS label and a UTC timestamp so every push
-## produces a fresh, uniquely-named release.
+## A single release is created once by the 'prepare' job; every platform's
+## binary is uploaded to that same release.  The tag is based on the Z3
+## version and a UTC timestamp so each workflow run produces a new release.
 
 on:
   push:
@@ -28,7 +29,33 @@ on:
         default: '4.3.1'
 
 jobs:
+
+  ## ── Create the shared GitHub release ─────────────────────────────────────
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag:   ${{ steps.rel.outputs.tag }}
+      title: ${{ steps.rel.outputs.title }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+    - name: Create release
+      id: rel
+      run: |
+        ver="${{ inputs.z3_version || '4.3.1' }}"
+        ts=$(date -u +%Y%m%d-%H%M%S)
+        tag="z3-${ver}-${ts}"
+        title="Z3 ${ver} — $(date -u '+%Y-%m-%d %H:%M UTC')"
+        echo "tag=$tag"     >> "$GITHUB_OUTPUT"
+        echo "title=$title" >> "$GITHUB_OUTPUT"
+        gh release create "$tag" \
+          --repo "${{ github.repository }}" \
+          --title "$title" \
+          --notes "Z3 ${ver} binaries for ubuntu-arm64, ubuntu-x86_64, macos-arm64, macos-x86_64. Built from https://github.com/Z3Prover/z3/releases/tag/z3-${ver}."
+
+  ## ── Build matrix ─────────────────────────────────────────────────────────
   build-z3:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -72,12 +99,9 @@ jobs:
     - name: Set build metadata
       id: meta
       run: |
-        ts=$(date -u +%Y%m%d-%H%M%S)
         ver="${{ env.Z3_VERSION }}"
         os="${{ env.OS_LABEL }}"
-        echo "tag=z3-${ver}-${os}-${ts}"     >> "$GITHUB_OUTPUT"
-        echo "asset_name=z3-${ver}-${os}"    >> "$GITHUB_OUTPUT"
-        echo "title=Z3 ${ver} / ${os} / $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$GITHUB_OUTPUT"
+        echo "asset_name=z3-${ver}-${os}" >> "$GITHUB_OUTPUT"
 
     ## ── Dependencies ───────────────────────────────────────────────────────
     - name: Install build dependencies (Linux)
@@ -377,26 +401,12 @@ jobs:
         echo "Smoke test passed"
 
     ## ── Publish ────────────────────────────────────────────────────────────
-    - name: Stage and publish release asset
+    - name: Upload asset to shared release
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        tag="${{ steps.meta.outputs.tag }}"
         asset="${{ steps.meta.outputs.asset_name }}"
-        ver="${{ env.Z3_VERSION }}"
-        os="${{ env.OS_LABEL }}"
-
-        cp "z3-z3-${ver}/build/z3" "$asset"
-
-        printf 'Z3 %s for %s\n\nBuilt: %s\nRunner: %s / %s\nSource: %s\n' \
-          "$ver" "$os" \
-          "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" \
-          "${{ runner.os }}" "${{ runner.arch }}" \
-          "https://github.com/Z3Prover/z3/releases/tag/z3-${ver}" \
-          > /tmp/z3-release-notes.md
-
-        gh release create "$tag" \
+        cp "z3-z3-${{ env.Z3_VERSION }}/build/z3" "$asset"
+        gh release upload "${{ needs.prepare.outputs.tag }}" \
           --repo "${{ github.repository }}" \
-          --title "${{ steps.meta.outputs.title }}" \
-          --notes-file /tmp/z3-release-notes.md \
           "${asset}#${asset}"
