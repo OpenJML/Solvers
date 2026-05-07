@@ -76,6 +76,12 @@ jobs:
         ## before invoking mk_make.py so they work with the system Python 3.
         2to3 -w scripts/ > /dev/null 2>&1
 
+        ## Some Z3 4.3.x C++ header files contain Latin-1 / Windows-1252 bytes
+        ## (e.g. 0x96 em-dash in a comment).  Python 3 open() defaults to UTF-8
+        ## on Linux, so reading those files raises UnicodeDecodeError.
+        ## Patch every text-mode open() in mk_util.py to use errors='replace'.
+        sed -i "s/fin = open(sig_file_path)/fin = open(sig_file_path, errors='replace')/" scripts/mk_util.py
+
         ## -W ignore::SyntaxWarning suppresses invalid-escape-sequence warnings
         ## in Z3 4.3.x string literals that 2to3 does not fix (they are
         ## harmless on Python 3.12 but noisy and may be errors on 3.14+).
