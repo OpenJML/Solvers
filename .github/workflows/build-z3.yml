@@ -335,9 +335,8 @@ jobs:
     - name: Verify binary
       run: |
         binary="z3-z3-${{ env.Z3_VERSION }}/build/z3"
-        ## For macOS x86_64 built via Rosetta, the binary must also run via arch.
+        ## For macOS x86_64 (Rosetta build) prepend arch -x86_64 when running.
         ARCH_CMD="${{ matrix.arch_cmd }}"
-        run_binary() { $ARCH_CMD "$binary" "$@"; }
 
         echo "=== file type / size ==="
         file "$binary"
@@ -351,17 +350,20 @@ jobs:
         fi
 
         echo "=== z3 version ==="
-        run_binary -version || echo "(z3 -version exited non-zero — continuing)"
+        $ARCH_CMD "$binary" -version || echo "(z3 -version exited non-zero — continuing)"
 
         echo "=== smoke test: (check-sat) via temp file ==="
+        ## The input file includes (exit) so Z3 terminates after check-sat.
+        ## timeout is intentionally omitted: it cannot wrap a command that
+        ## includes a variable prefix, and macOS may not have GNU timeout.
         tmp=$(mktemp /tmp/z3_smoke_XXXXXX.smt2)
         printf '(check-sat)\n(exit)\n' > "$tmp"
-        smoke_out=$(timeout 10 run_binary -smt2 "$tmp" 2>&1)
+        smoke_out=$($ARCH_CMD "$binary" -smt2 "$tmp" 2>&1)
         ec=$?
         rm -f "$tmp"
         echo "$smoke_out"
-        if [ $ec -eq 124 ]; then
-            echo "FAIL: z3 timed out (10 s)"
+        if [ $ec -ne 0 ] && ! echo "$smoke_out" | grep -q "^sat"; then
+            echo "FAIL: z3 exited $ec and did not produce 'sat'"
             exit 1
         fi
         if echo "$smoke_out" | grep -q "^ERROR"; then
