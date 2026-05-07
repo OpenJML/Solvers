@@ -184,7 +184,9 @@ jobs:
         set +e
         make -j$(nproc) -C "z3-z3-${{ env.Z3_VERSION }}/build" z3 > /tmp/build_out.txt 2>&1
         ec=$?
-        grep -E "error:|Error|undefined" /tmp/build_out.txt | head -10 | while IFS= read -r line; do
+        ## Show context: which Z3 source file and the first few errors
+        grep -E "In file included from .*/z3-z3|z3-z3.*\.cpp.*error:|error:" /tmp/build_out.txt \
+          | grep -v "note:" | head -15 | while IFS= read -r line; do
             echo "::error::$line"
         done
         set -e; exit $ec
