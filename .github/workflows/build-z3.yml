@@ -113,7 +113,7 @@ jobs:
         ##    us the statically-linked C++ runtime we want.
         printf '%s\n' \
           'CC=gcc' 'PREFIX=/usr/local' 'CXX=g++' \
-          'CXXFLAGS= -c -O3 -D _EXTERNAL_RELEASE -fomit-frame-pointer' \
+          'CXXFLAGS= -c -O3 -D _EXTERNAL_RELEASE -D_NO_OMP_ -fomit-frame-pointer -fpermissive' \
           'CXX_OUT_FLAG=-o' 'OBJ_EXT=.o' 'LIB_EXT=.a' \
           'AR=ar' 'AR_FLAGS=rcs' 'AR_OUTFLAG=' 'EXE_EXT=' \
           'LINK=g++' 'LINK_FLAGS=-static-libstdc++ -static-libgcc' \
@@ -144,7 +144,14 @@ jobs:
     - name: Build Z3
       run: |
         ver="${{ env.Z3_VERSION }}"
-        make -j$(nproc) -C "z3-z3-${ver}/build" z3
+        set +e
+        make -j$(nproc) -C "z3-z3-${ver}/build" z3 2>&1 | tee /tmp/build_out.txt
+        ec=${PIPESTATUS[0]}
+        echo '## make output (last 60 lines)' >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
+        tail -60 /tmp/build_out.txt >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
+        exit $ec
 
     ## ── Verify ─────────────────────────────────────────────────────────────
     - name: Verify binary
