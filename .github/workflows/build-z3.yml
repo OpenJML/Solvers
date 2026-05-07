@@ -67,40 +67,44 @@ jobs:
         echo "Source directory: $(ls -d z3-z3-*/)"
 
     ## ── Configure ──────────────────────────────────────────────────────────
-    - name: Configure Z3 build
+    - name: Convert Z3 build scripts to Python 3
       run: |
         ver="${{ env.Z3_VERSION }}"
         cd "z3-z3-${ver}"
 
-        ## Z3 4.3.x build scripts use Python 2 syntax.  Convert them in-place
-        ## before invoking mk_make.py so they work with the system Python 3.
+        ## Z3 4.3.x build scripts use Python 2 syntax.
         2to3 -w scripts/ > /dev/null 2>&1
+        echo "2to3 complete.  First 5 lines of mk_util.py:"
+        head -5 scripts/mk_util.py
 
-        ## Some Z3 4.3.x C++ header files contain Latin-1 / Windows-1252 bytes
-        ## (e.g. 0x96 em-dash in a comment).  Python 3 open() defaults to UTF-8
-        ## on Linux, so reading those files raises UnicodeDecodeError.
+    - name: Generate Z3 Makefile
+      run: |
+        ver="${{ env.Z3_VERSION }}"
+        cd "z3-z3-${ver}"
+
+        ## Some Z3 4.3.x C++ source files contain Latin-1 bytes that cause
+        ## UnicodeDecodeError when Python 3 reads them as UTF-8.
         ##
-        ## Rather than hunting for the specific open() call (which changes form
-        ## after 2to3 transforms the file), prepend a builtins.open monkey-patch
-        ## to mk_util.py so that EVERY text-mode file open uses errors='replace'.
+        ## 2to3 may add "from io import open" to mk_util.py, which creates a
+        ## local binding that bypasses a builtins.open patch.  Use a wrapper
+        ## script that patches BOTH builtins.open AND io.open before executing
+        ## mk_make.py so that every open() call — however the module imports it
+        ## — uses errors='replace'.
         printf '%s\n' \
-          'import builtins as _b' \
-          '_ro = _b.open' \
-          "def _so(f, mode='r', *a, **k):" \
-          "    if 'b' not in str(mode) and 'errors' not in k and 'encoding' not in k:" \
+          'import builtins as _b, io as _io' \
+          '_orig = _b.open' \
+          "def _so(f, m='r', *a, **k):" \
+          "    if 'b' not in str(m) and 'errors' not in k and 'encoding' not in k:" \
           "        k['errors'] = 'replace'" \
-          '    return _ro(f, mode, *a, **k)' \
-          '_b.open = _so' \
-          '' \
-          | cat - scripts/mk_util.py > /tmp/mk_patched.py
-        cp /tmp/mk_patched.py scripts/mk_util.py
+          '    return _orig(f, m, *a, **k)' \
+          '_b.open = _io.open = _so' \
+          "exec(open('scripts/mk_make.py', errors='replace').read())" \
+          > /tmp/run_mk_make.py
 
-        ## -W ignore::SyntaxWarning suppresses invalid-escape-sequence warnings
-        ## in Z3 4.3.x string literals that 2to3 does not fix (they are
-        ## harmless on Python 3.12 but noisy and may be errors on 3.14+).
-        ## Note: --noomp was added after 4.3.1 and is not recognised here;
-        ## OpenMP is simply absent on this runner so no extra flag is needed.
-        python3 -W ignore::SyntaxWarning scripts/mk_make.py
+        echo "Wrapper script:"
+        cat /tmp/run_mk_make.py
+        echo "--- running ---"
+        python3 -W ignore::SyntaxWarning /tmp/run_mk_make.py
 
         ## Inject static C++ runtime flags into the generated build.
         ## Z3 4.3.x uses a Python-generated Makefile; the link step for the
