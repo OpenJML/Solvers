@@ -84,25 +84,6 @@ jobs:
       run: |
         cd "z3-z3-${{ env.Z3_VERSION }}"
 
-        ## 0. Patch src/util/util.h: Z3 4.3.1 defines __in and __out as empty
-        ##    macros (Windows SAL annotation stubs).  GCC 9's STL uses __in as
-        ##    a real variable name in algorithm templates, so the empty macro
-        ##    expansion silently corrupts the parse.  Guard these defines so they
-        ##    are only active on Windows (where SAL headers define them first).
-        python3 -c "
-        import pathlib
-        p = pathlib.Path('src/util/util.h')
-        t = p.read_text()
-        # Wrap the __in/__out/#ifndef block in a '#ifdef _WINDOWS' guard
-        old = '#ifndef __out\n#define __out\n#endif\n\n#ifndef __in\n#define __in\n#endif\n\n#ifndef __inout\n#define __inout\n#endif'
-        new = '#ifdef _WINDOWS\n' + old + '\n#endif'
-        if old in t:
-            p.write_text(t.replace(old, new))
-            print('Patched __in/__out macros in util.h')
-        else:
-            print('Pattern not found — check util.h manually')
-        "
-
         ## 1. Convert Python 2 syntax in build scripts and Python API.
         ##    Also expand tabs (Python 3 disallows mixed tabs+spaces).
         2to3 -w scripts/ src/api/python/ > /dev/null 2>&1
