@@ -284,7 +284,11 @@ jobs:
               '#define _MM_ROUND_TOWARD_ZERO FE_TOWARDZERO' \
               '#define _MM_SET_ROUNDING_MODE(x) fesetround(x)' \
               > /tmp/stub_includes/emmintrin.h
-            echo "Created ARM64 emmintrin.h stub"
+            ## Also install to /usr/local/include so GCC finds it without any -I flag.
+            ## This is necessary for Z3 4.3.2 where the generated build/config.mk
+            ## may not propagate our custom -I flag into every compilation command.
+            cp /tmp/stub_includes/emmintrin.h /usr/local/include/emmintrin.h
+            echo "Created ARM64 emmintrin.h stub (also installed to /usr/local/include/)"
             STUB_INC="-I/tmp/stub_includes"
         else
             STUB_INC=""
