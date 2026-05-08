@@ -1,7 +1,12 @@
 name: Build Z3 Solver
 
 ## Builds Z3 from source for multiple platforms and publishes each binary
-## as a GitHub release asset.  Z3 version is parameterised; defaults to 4.3.1.
+## as a GitHub release asset.  Z3 version is parameterised.
+##
+## ╔══════════════════════════════════════╗
+## ║  To change the default Z3 version,  ║
+## ║  edit DEFAULT_Z3_VERSION below only. ║
+## ╚══════════════════════════════════════╝
 ##
 ## Matrix:
 ##   ubuntu-arm64   — ubuntu-24.04-arm runner, ubuntu:20.04 container (GCC 9)
@@ -18,15 +23,19 @@ name: Build Z3 Solver
 ## binary is uploaded to that same release.  The tag is based on the Z3
 ## version and a UTC timestamp so each workflow run produces a new release.
 
+## ── Single version setting ───────────────────────────────────────────────────
+env:
+  DEFAULT_Z3_VERSION: '4.3.1'   ## ← change this to build a different Z3 version
+
 on:
   push:
     branches: [ build ]
   workflow_dispatch:
     inputs:
       z3_version:
-        description: 'Z3 version tag to build (e.g. 4.3.1)'
-        required: true
-        default: '4.3.2'
+        description: 'Z3 version tag to build (overrides DEFAULT_Z3_VERSION)'
+        required: false
+        default: ''
 
 jobs:
 
@@ -42,7 +51,7 @@ jobs:
     - name: Create release
       id: rel
       run: |
-        ver="${{ inputs.z3_version || '4.3.1' }}"
+        ver="${{ inputs.z3_version || env.DEFAULT_Z3_VERSION }}"
         ts=$(date -u +%Y%m%d-%H%M%S)
         tag="z3-${ver}-${ts}"
         title="Z3 ${ver} — $(date -u '+%Y-%m-%d %H:%M UTC')"
@@ -94,7 +103,7 @@ jobs:
     container: ${{ matrix.container }}
 
     env:
-      Z3_VERSION: ${{ inputs.z3_version || '4.3.1' }}
+      Z3_VERSION: ${{ inputs.z3_version || env.DEFAULT_Z3_VERSION }}
       OS_LABEL:   ${{ matrix.label }}
 
     steps:
