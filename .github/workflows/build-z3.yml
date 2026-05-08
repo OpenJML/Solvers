@@ -43,20 +43,26 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     outputs:
-      tag:   ${{ steps.rel.outputs.tag }}
-      title: ${{ steps.rel.outputs.title }}
+      tag:       ${{ steps.rel.outputs.tag }}
+      title:     ${{ steps.rel.outputs.title }}
+      z3_version: ${{ steps.rel.outputs.z3_version }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
     - name: Create release
       id: rel
       run: |
+        ## env.DEFAULT_Z3_VERSION is accessible here (step run context).
+        ## The resolved version is exposed as an output so build-z3 can
+        ## reference it via needs.prepare.outputs.z3_version — avoiding
+        ## the job env: context where 'env' named-value is not available.
         ver="${{ inputs.z3_version || env.DEFAULT_Z3_VERSION }}"
         ts=$(date -u +%Y%m%d-%H%M%S)
         tag="z3-${ver}-${ts}"
         title="Z3 ${ver} — $(date -u '+%Y-%m-%d %H:%M UTC')"
-        echo "tag=$tag"     >> "$GITHUB_OUTPUT"
-        echo "title=$title" >> "$GITHUB_OUTPUT"
+        echo "z3_version=$ver" >> "$GITHUB_OUTPUT"
+        echo "tag=$tag"        >> "$GITHUB_OUTPUT"
+        echo "title=$title"    >> "$GITHUB_OUTPUT"
         ## Create as a draft so it is invisible until all builds succeed.
         ## The 'finalize' job publishes it once every platform has uploaded.
         gh release create "$tag" \
@@ -103,7 +109,7 @@ jobs:
     container: ${{ matrix.container }}
 
     env:
-      Z3_VERSION: ${{ inputs.z3_version || env.DEFAULT_Z3_VERSION }}
+      Z3_VERSION: ${{ needs.prepare.outputs.z3_version }}
       OS_LABEL:   ${{ matrix.label }}
 
     steps:
