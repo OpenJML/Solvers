@@ -366,7 +366,15 @@ jobs:
           tail -5 /tmp/mk_out.txt; } | sort -u | while IFS= read -r line; do
             echo "::error file=scripts/mk_make.py::$line"
         done
-        set -e; exit $ec
+        set -e
+        ## Remove x86-only SIMD flags that Z3 4.3.x adds unconditionally for
+        ## Linux regardless of CPU architecture.  On ARM64 these cause a hard
+        ## compiler error ("unrecognized command line option").
+        if [ $ec -eq 0 ] && [ "$(uname -m)" = "aarch64" ]; then
+            sed -i 's/-mfpmath=sse//g; s/-msse2//g; s/-msse\b//g' build/Makefile
+            echo "Stripped x86 SSE flags from build/Makefile for ARM64"
+        fi
+        exit $ec
 
     ## ── Build ──────────────────────────────────────────────────────────────
     - name: Build Z3
