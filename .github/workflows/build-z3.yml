@@ -3,10 +3,14 @@ name: Build Z3 Solver
 ## Builds Z3 from source for multiple platforms and publishes each binary
 ## as a GitHub release asset.  Z3 version is parameterised.
 ##
-## ╔══════════════════════════════════════╗
-## ║  To change the default Z3 version,  ║
-## ║  edit DEFAULT_Z3_VERSION below only. ║
-## ╚══════════════════════════════════════╝
+## ╔════════════════════════════════════════════╗
+## ║  To change the default Z3 version,         ║
+## ║  edit DEFAULT_Z3_VERSION below only.       ║ 
+## ║                                            ║
+## ║   To initiata a build vis command-line use ║
+## ║   gh workflow run build-z3.yml --repo OpenJML/Solvers --ref build --field z3_version=$1
+## ║   substituting the versino number for $1   ║
+## ╚════════════════════════════════════════════╝
 ##
 ## Matrix:
 ##   ubuntu-arm64   — ubuntu-24.04-arm runner, ubuntu:20.04 container (GCC 9)
