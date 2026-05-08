@@ -367,12 +367,26 @@ jobs:
             echo "::error file=scripts/mk_make.py::$line"
         done
         set -e
-        ## Remove x86-only SIMD flags that Z3 4.3.x adds unconditionally for
-        ## Linux regardless of CPU architecture.  On ARM64 these cause a hard
-        ## compiler error ("unrecognized command line option").
+        ## Remove x86-only SIMD flags that Z3 4.3.x mk_util.py injects into
+        ## the generated build files for Linux regardless of CPU architecture.
+        ## On ARM64 these flags cause a hard compiler error.
+        ## Use Python (not sed) for reliable regex replacement across all
+        ## generated .mk / Makefile files in the build directory.
         if [ $ec -eq 0 ] && [ "$(uname -m)" = "aarch64" ]; then
-            sed -i 's/-mfpmath=sse//g; s/-msse2//g; s/-msse\b//g' build/Makefile
-            echo "Stripped x86 SSE flags from build/Makefile for ARM64"
+            python3 -c "
+        import pathlib, re
+        flags = re.compile(r'-mfpmath=sse|-msse2|-msse(?!\d)')
+        count = 0
+        for p in pathlib.Path('build').glob('*'):
+            if p.is_file() and (p.suffix in ('.mk', '.make') or p.name == 'Makefile'):
+                t = p.read_text(errors='replace')
+                new_t = flags.sub('', t)
+                if new_t != t:
+                    p.write_text(new_t)
+                    count += 1
+                    print('Stripped SSE flags from', p.name)
+        print(f'Patched {count} file(s)')
+            "
         fi
         exit $ec
 
