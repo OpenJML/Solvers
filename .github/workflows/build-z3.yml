@@ -210,6 +210,9 @@ jobs:
         "
 
         ## 1a. Replace distutils.sysconfig (removed in Python 3.12) with sysconfig.
+        ##     Handles all known uses across Z3 4.3.x versions:
+        ##       get_python_lib()     → sysconfig.get_path('purelib')
+        ##       get_python_version() → sysconfig.get_python_version()
         python3 -c "
         import pathlib
         p = pathlib.Path('scripts/mk_util.py')
@@ -218,6 +221,8 @@ jobs:
                       'import sysconfig as _sysconfig_mod')
         t = t.replace('distutils.sysconfig.get_python_lib()',
                       '_sysconfig_mod.get_path(\"purelib\")')
+        t = t.replace('distutils.sysconfig.get_python_version()',
+                      '_sysconfig_mod.get_python_version()')
         p.write_text(t)
         print('Patched distutils.sysconfig in mk_util.py')
         "
