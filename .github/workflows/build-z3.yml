@@ -440,7 +440,7 @@ jobs:
             ## shutil trying to import the posix module which doesn't exist on Windows.
             ## z3's which() uses os.path.isfile() and never appends .exe, so
             ## MinGW64's ar.exe isn't found by which('ar'). Set AR=ar.exe explicitly.
-            python3 -W ignore::SyntaxWarning -c "import os, runpy, sys; os.name = 'linux'; os.environ.setdefault('AR', 'ar.exe'); os.uname = lambda: type('u', (), dict(sysname='Linux', nodename='host', release='5.15', version='', machine='x86_64'))(); sys.path.insert(0, 'scripts'); sys.argv = ['scripts/mk_make.py'] + '$EXTRA_MK_ARGS'.split(); runpy.run_path('scripts/mk_make.py', run_name='__main__')" > /tmp/mk_out.txt 2>&1
+            python3 -W ignore::SyntaxWarning -c "import os, runpy, sys; os.name = 'linux'; os.environ.setdefault('AR', 'ar.exe'); os.uname = lambda: ('Linux', 'host', '5.15', '', 'x86_64'); sys.path.insert(0, 'scripts'); sys.argv = ['scripts/mk_make.py'] + '$EXTRA_MK_ARGS'.split(); runpy.run_path('scripts/mk_make.py', run_name='__main__')" > /tmp/mk_out.txt 2>&1
             ;;
         *)
             python3 -W ignore::SyntaxWarning scripts/mk_make.py $EXTRA_MK_ARGS > /tmp/mk_out.txt 2>&1
