@@ -282,7 +282,9 @@ jobs:
                 continue
             t = p.read_text(errors='replace')
             new_t = (t.replace(\"platform.system() == 'Windows'\", 'False')
-                      .replace(\"platform.system() == 'Linux'\", 'True'))
+                      .replace('platform.system() == \"Windows\"', 'False')
+                      .replace(\"platform.system() == 'Linux'\", 'True')
+                      .replace('platform.system() == \"Linux\"', 'True'))
             if new_t != t:
                 p.write_text(new_t)
                 print('Patched platform detection in', fname)
@@ -505,18 +507,25 @@ jobs:
       if: env.USE_CMAKE == 'true'
       run: |
         cd "z3-z3-${{ env.Z3_VERSION }}"
-        ARCH_CMD="${{ matrix.arch_cmd }}"
         ## Common cmake flags for all platforms.
         CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=20 -DZ3_BUILD_LIBZ3_SHARED=OFF"
         case "$(uname -s)" in
         MINGW*|MSYS*|CYGWIN*)
             ## Force MinGW64 g++ and Unix Makefile generator (avoids MSVC detection).
-            $ARCH_CMD cmake -B build -G "Unix Makefiles" $CMAKE_ARGS \
+            cmake -B build -G "Unix Makefiles" $CMAKE_ARGS \
                 -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
                 -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc -Wl,-Bstatic -lpthread -Wl,-Bdynamic"
             ;;
+        Darwin)
+            ## cmake itself is an ARM64 binary on macos-14; running it via
+            ## arch -x86_64 would fail.  Instead pass the target architecture
+            ## as a cmake flag so the compiler produces x86_64 output.
+            ARCH_EXTRA=""
+            [ -n "${{ matrix.arch_cmd }}" ] && ARCH_EXTRA="-DCMAKE_OSX_ARCHITECTURES=x86_64"
+            cmake -B build $CMAKE_ARGS $ARCH_EXTRA
+            ;;
         *)
-            $ARCH_CMD cmake -B build $CMAKE_ARGS
+            cmake -B build $CMAKE_ARGS
             ;;
         esac
 
@@ -527,16 +536,19 @@ jobs:
         JOBS=$(nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
         set +e
         if [ "$USE_CMAKE" = "true" ]; then
-            $ARCH_CMD cmake --build "z3-z3-${{ env.Z3_VERSION }}/build" \
-                --target z3 -j"$JOBS" > /tmp/build_out.txt 2>&1
+            ## Build all targets; cmake determines which includes the z3 binary.
+            ## (--target z3 omitted: target name may differ across cmake versions.)
+            cmake --build "z3-z3-${{ env.Z3_VERSION }}/build" \
+                -j"$JOBS" > /tmp/build_out.txt 2>&1
         else
             $ARCH_CMD make -j"$JOBS" -C "z3-z3-${{ env.Z3_VERSION }}/build" z3 > /tmp/build_out.txt 2>&1
         fi
         ec=$?
-        grep -E "undefined reference|error:|ld returned|ld: error" /tmp/build_out.txt \
-          | head -15 | while IFS= read -r line; do
+        grep -E "undefined reference|error:|ld returned|ld: error|CMake Error|FAILED:|Error 1$|Error 2$" \
+            /tmp/build_out.txt | head -15 | while IFS= read -r line; do
             echo "::error::$line"
         done
+        [ $ec -ne 0 ] && { echo "=== build output (last 30 lines) ==="; tail -30 /tmp/build_out.txt; }
         set -e; exit $ec
 
     ## ── Verify ─────────────────────────────────────────────────────────────
