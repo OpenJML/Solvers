@@ -239,13 +239,19 @@ jobs:
         "
 
         ## 1. Convert Python 2 syntax; fix tab/space mixing.
-        ## 2to3 may exit 1 on z3 ≥ 4.8 whose Python scripts already use Python 3
-        ## syntax (f-strings etc.) that 2to3's Python-2 parser cannot read.
-        ## In that case the scripts are already Python 3 compatible — skip silently.
-        2to3 -w scripts/ src/api/python/ > /dev/null 2>&1 || true
-        for f in scripts/*.py src/api/python/*.py; do
-            [ -f "$f" ] && { expand -t 8 "$f" > /tmp/pf && mv /tmp/pf "$f"; } || true
-        done
+        ## Run 2to3 only if it can parse scripts/mk_make.py (i.e., it is Python 2).
+        ## z3 ≥ 4.8 already uses Python 3 syntax (f-strings etc.) that 2to3's
+        ## Python-2 parser cannot read.  If we let 2to3 run and fail mid-way it
+        ## leaves partially-converted files that cause SyntaxErrors downstream.
+        ## Using mk_make.py as a canary avoids that: if 2to3 exits 1 on it the
+        ## whole set of scripts is already Python 3 and needs no conversion.
+        if 2to3 scripts/mk_make.py > /dev/null 2>&1; then
+            2to3 -w scripts/ src/api/python/ > /dev/null 2>&1 || true
+            find scripts/ src/api/python/ -name '*.bak' -delete 2>/dev/null || true
+            for f in scripts/*.py src/api/python/*.py; do
+                [ -f "$f" ] && { expand -t 8 "$f" > /tmp/pf && mv /tmp/pf "$f"; } || true
+            done
+        fi
 
         ## 2. Skip non-Linux Makefile targets from mk_make.py.
         python3 -c "

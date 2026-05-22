@@ -9,6 +9,16 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
+## Refuse to trigger a build if local commits on 'build' haven't been pushed
+## to origin — the workflow would run the old code and silently ignore our fixes.
+LOCAL=$(git -C "$(dirname "$0")" rev-parse build 2>/dev/null)
+REMOTE=$(git -C "$(dirname "$0")" rev-parse origin/build 2>/dev/null)
+if [ "$LOCAL" != "$REMOTE" ]; then
+    echo "ERROR: local 'build' branch has unpushed commits (local=$LOCAL, origin=$REMOTE)." >&2
+    echo "       Push first: cd $(dirname "$0") && git push origin build" >&2
+    exit 1
+fi
+
 for v in "$@" ; do
     echo "Triggering build for z3 $v ..."
     gh workflow run build-z3.yml --repo OpenJML/Solvers --ref build --field z3_version="$v"
