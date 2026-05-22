@@ -3,14 +3,9 @@ name: Build Z3 Solver
 ## Builds Z3 from source for multiple platforms and publishes each binary
 ## as a GitHub release asset.  Z3 version is parameterised.
 ##
-## ╔════════════════════════════════════════════╗
-## ║  To change the default Z3 version,         ║
-## ║  edit DEFAULT_Z3_VERSION below only.       ║ 
-## ║                                            ║
-## ║   To initiata a build vis command-line use ║
-## ║   gh workflow run build-z3.yml --repo OpenJML/Solvers --ref build --field z3_version=$1
-## ║   substituting the versino number for $1   ║
-## ╚════════════════════════════════════════════╝
+## Trigger manually via the GitHub UI or:
+##   gh workflow run build-z3.yml --repo OpenJML/Solvers --ref build --field z3_version=<version>
+## The build-z3 convenience script wraps this call.
 ##
 ## Matrix:
 ##   ubuntu-arm64   — ubuntu-24.04-arm runner, ubuntu:20.04 container (GCC 9)
@@ -27,19 +22,12 @@ name: Build Z3 Solver
 ## binary is uploaded to that same release.  The tag is based on the Z3
 ## version and a UTC timestamp so each workflow run produces a new release.
 
-## ── Single version setting ───────────────────────────────────────────────────
-env:
-  DEFAULT_Z3_VERSION: '4.3.2'   ## ← change this to build a different Z3 version
-
 on:
-  push:
-    branches: [ build ]
   workflow_dispatch:
     inputs:
       z3_version:
-        description: 'Z3 version tag to build (overrides DEFAULT_Z3_VERSION)'
-        required: false
-        default: ''
+        description: 'Z3 version tag to build (e.g. 4.8.12, 4.16.0)'
+        required: true
 
 jobs:
 
@@ -56,11 +44,10 @@ jobs:
     - name: Create release
       id: rel
       run: |
-        ## env.DEFAULT_Z3_VERSION is accessible here (step run context).
         ## The resolved version is exposed as an output so build-z3 can
         ## reference it via needs.prepare.outputs.z3_version — avoiding
         ## the job env: context where 'env' named-value is not available.
-        ver="${{ inputs.z3_version || env.DEFAULT_Z3_VERSION }}"
+        ver="${{ inputs.z3_version }}"
         ts=$(date -u +%Y%m%d-%H%M%S)
         tag="z3-${ver}-${ts}"
         title="Z3 ${ver} — $(date -u '+%Y-%m-%d %H:%M UTC')"
@@ -83,21 +70,25 @@ jobs:
       matrix:
         include:
           - runner:    ubuntu-24.04-arm
-            label:     ubuntu-arm64
+            label:     ubuntu-24.04-arm64
             container: ubuntu:20.04
             arch_cmd:  ''
           - runner:    ubuntu-24.04
-            label:     ubuntu-x86_64
+            label:     ubuntu-24.04-x86_64
             container: ubuntu:20.04
             arch_cmd:  ''
           - runner:    macos-14
-            label:     macos-arm64
+            label:     macos-14-arm64
             container: ''
             arch_cmd:  ''
           - runner:    macos-14
-            label:     macos-x86_64
+            label:     macos-14-x86_64
             container: ''
             arch_cmd:  'arch -x86_64'
+          - runner:    windows-latest
+            label:     windows
+            container: ''
+            arch_cmd:  ''
 
     runs-on: ${{ matrix.runner }}
 
@@ -115,6 +106,11 @@ jobs:
     env:
       Z3_VERSION: ${{ needs.prepare.outputs.z3_version }}
       OS_LABEL:   ${{ matrix.label }}
+
+    ## Use bash on all platforms (Git Bash on Windows).
+    defaults:
+      run:
+        shell: bash
 
     steps:
     ## ── Metadata ───────────────────────────────────────────────────────────
@@ -138,6 +134,15 @@ jobs:
           > /etc/apt/sources.list.d/github-cli.list
         apt-get update -qq
         apt-get install -y gh
+
+    - name: Install build dependencies (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        ## MSYS2 is pre-installed on windows-latest; add MinGW64 to PATH
+        ## to get g++, make, ar, and standard Unix tools.
+        echo "C:/msys64/mingw64/bin" >> "$GITHUB_PATH"
+        echo "C:/msys64/usr/bin"     >> "$GITHUB_PATH"
+        pip3 install setuptools 2to3 || true
 
     - name: Install build dependencies (macOS)
       if: runner.os == 'macOS'
@@ -215,19 +220,19 @@ jobs:
         "
 
         ## 1a. Replace distutils.sysconfig (removed in Python 3.12) with sysconfig.
-        ##     Handles all known uses across Z3 4.3.x versions:
-        ##       get_python_lib()     → sysconfig.get_path('purelib')
-        ##       get_python_version() → sysconfig.get_python_version()
+        ##     Uses regex so it matches get_python_lib(...) with any arguments —
+        ##     Z3 4.8.x calls get_python_lib(prefix=getenv("PREFIX", None))
+        ##     which the simple string-replace approach misses.
         python3 -c "
-        import pathlib
+        import pathlib, re
         p = pathlib.Path('scripts/mk_util.py')
         t = p.read_text(errors='replace')
         t = t.replace('import distutils.sysconfig',
                       'import sysconfig as _sysconfig_mod')
-        t = t.replace('distutils.sysconfig.get_python_lib()',
-                      '_sysconfig_mod.get_path(\"purelib\")')
-        t = t.replace('distutils.sysconfig.get_python_version()',
-                      '_sysconfig_mod.get_python_version()')
+        t = re.sub(r'distutils\.sysconfig\.get_python_lib\([^)]*\)',
+                   '_sysconfig_mod.get_path(\"purelib\")', t)
+        t = re.sub(r'distutils\.sysconfig\.get_python_version\(\)',
+                   '_sysconfig_mod.get_python_version()', t)
         p.write_text(t)
         print('Patched distutils.sysconfig in mk_util.py')
         "
@@ -338,36 +343,45 @@ jobs:
         "
 
         ## 7. Generate scripts/config-release.mk with platform-specific values.
-        ##    Linux:  GCC, static C++ runtime, -lrt for POSIX timers.
-        ##    macOS:  Apple Clang, dynamic libs (macOS C++ runtime is part of OS).
+        ##    Linux:   GCC, static C++ runtime, -lrt for POSIX timers.
+        ##    macOS:   Apple Clang, dynamic libs (macOS C++ runtime is part of OS).
+        ##    Windows: MinGW64 g++, static C++ runtime, .exe/.dll, no -lrt.
         ARCH_CMD="${{ matrix.arch_cmd }}"
-        if [ "$(uname)" = "Darwin" ]; then
-            CXX_CMD="clang++"
-            if [ -n "$ARCH_CMD" ]; then
-                CXX_CMD="$ARCH_CMD clang++"
-            fi
+        case "$(uname -s)" in
+        Darwin)
             printf '%s\n' \
               "CC=clang" "PREFIX=/usr/local" "CXX=clang++" \
-              "CXXFLAGS= -c -O2 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL ${STUB_INC} -fpermissive -Wno-c++11-extensions -fomit-frame-pointer" \
+              "CXXFLAGS= -c -O2 -std=c++17 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL ${STUB_INC} -fpermissive -Wno-c++11-extensions -fomit-frame-pointer" \
               'CXX_OUT_FLAG=-o' 'OBJ_EXT=.o' 'LIB_EXT=.a' \
               'AR=ar' 'AR_FLAGS=rcs' 'AR_OUTFLAG=' 'EXE_EXT=' \
               'LINK=clang++' 'LINK_FLAGS=' \
               'LINK_OUT_FLAG=-o' 'LINK_EXTRA_FLAGS=-lpthread' \
               'SO_EXT=.dylib' 'SLINK=clang++' 'SLINK_FLAGS=-dynamiclib' \
               'SLINK_EXTRA_FLAGS=' 'SLINK_OUT_FLAG=-o' \
-              > scripts/config-release.mk
-        else
+              > scripts/config-release.mk ;;
+        MINGW*|MSYS*|CYGWIN*)
+            printf '%s\n' \
+              'CC=gcc' 'PREFIX=C:/z3' 'CXX=g++' \
+              "CXXFLAGS= -c -O3 -std=c++17 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL ${STUB_INC} -fomit-frame-pointer" \
+              'CXX_OUT_FLAG=-o' 'OBJ_EXT=.o' 'LIB_EXT=.a' \
+              'AR=ar' 'AR_FLAGS=rcs' 'AR_OUTFLAG=' 'EXE_EXT=.exe' \
+              'LINK=g++' 'LINK_FLAGS=-static-libstdc++ -static-libgcc' \
+              'LINK_OUT_FLAG=-o' 'LINK_EXTRA_FLAGS=-Wl,-Bstatic -lpthread -Wl,-Bdynamic' \
+              'SO_EXT=.dll' 'SLINK=g++' 'SLINK_FLAGS=-shared' \
+              'SLINK_EXTRA_FLAGS=' 'SLINK_OUT_FLAG=-o' \
+              > scripts/config-release.mk ;;
+        *)
             printf '%s\n' \
               'CC=gcc' 'PREFIX=/usr/local' 'CXX=g++' \
-              "CXXFLAGS= -c -O3 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL ${STUB_INC} -fomit-frame-pointer" \
+              "CXXFLAGS= -c -O3 -std=c++17 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL ${STUB_INC} -fomit-frame-pointer" \
               'CXX_OUT_FLAG=-o' 'OBJ_EXT=.o' 'LIB_EXT=.a' \
               'AR=ar' 'AR_FLAGS=rcs' 'AR_OUTFLAG=' 'EXE_EXT=' \
               'LINK=g++' 'LINK_FLAGS=-static-libstdc++ -static-libgcc' \
               'LINK_OUT_FLAG=-o' 'LINK_EXTRA_FLAGS=-lpthread -lrt' \
               'SO_EXT=.so' 'SLINK=g++' 'SLINK_FLAGS=-shared' \
               'SLINK_EXTRA_FLAGS=' 'SLINK_OUT_FLAG=-o' \
-              > scripts/config-release.mk
-        fi
+              > scripts/config-release.mk ;;
+        esac
         echo "config-release.mk generated"
         cat scripts/config-release.mk
 
@@ -424,6 +438,8 @@ jobs:
     - name: Verify binary
       run: |
         binary="z3-z3-${{ env.Z3_VERSION }}/build/z3"
+        ## Windows binary has .exe extension.
+        [ -f "${binary}.exe" ] && binary="${binary}.exe"
         ## For macOS x86_64 (Rosetta build) prepend arch -x86_64 when running.
         ARCH_CMD="${{ matrix.arch_cmd }}"
 
@@ -471,7 +487,9 @@ jobs:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         asset="${{ steps.meta.outputs.asset_name }}"
-        cp "z3-z3-${{ env.Z3_VERSION }}/build/z3" "$asset"
+        src="z3-z3-${{ env.Z3_VERSION }}/build/z3"
+        [ -f "${src}.exe" ] && src="${src}.exe"
+        cp "$src" "$asset"
         gh release upload "${{ needs.prepare.outputs.tag }}" \
           --repo "${{ github.repository }}" \
           "${asset}#${asset}"
