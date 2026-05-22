@@ -434,7 +434,11 @@ jobs:
             ## ignores Unix paths.  Instead, patch platform.system() inline and run
             ## mk_make.py via runpy in the same session — platform is already patched
             ## in sys.modules so any 'import platform' in mk_make.py gets our version.
-            python3 -W ignore::SyntaxWarning -c "import os, platform, runpy, sys; platform.system = lambda: 'Linux'; sys.platform = 'linux'; os.name = 'linux'; sys.path.insert(0, 'scripts'); sys.argv = ['scripts/mk_make.py'] + '$EXTRA_MK_ARGS'.split(); runpy.run_path('scripts/mk_make.py', run_name='__main__')" > /tmp/mk_out.txt 2>&1
+            ## z3's mk_util.py sets IS_WINDOWS based solely on os.name=='nt'.
+            ## Setting os.name='linux' makes IS_WINDOWS=False so mk_make.py
+            ## generates a GNU Makefile. Using 'linux' (not 'posix') avoids
+            ## shutil trying to import the posix module which doesn't exist on Windows.
+            python3 -W ignore::SyntaxWarning -c "import os, runpy, sys; os.name = 'linux'; sys.path.insert(0, 'scripts'); sys.argv = ['scripts/mk_make.py'] + '$EXTRA_MK_ARGS'.split(); runpy.run_path('scripts/mk_make.py', run_name='__main__')" > /tmp/mk_out.txt 2>&1
             ;;
         *)
             python3 -W ignore::SyntaxWarning scripts/mk_make.py $EXTRA_MK_ARGS > /tmp/mk_out.txt 2>&1
