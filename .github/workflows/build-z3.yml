@@ -146,6 +146,11 @@ jobs:
         brew install gh || true
         ## 2to3 ships with Python 3 on macOS.
         which 2to3 || pip3 install 2to3 || true
+        ## setuptools provides distutils, which was removed from the Python stdlib
+        ## in 3.12.  Z3 4.8.x build scripts reference distutils directly.
+        ## --break-system-packages is required on Python 3.12+ macOS runners.
+        pip3 install --break-system-packages setuptools 2>/dev/null \
+          || pip3 install setuptools || true
 
     ## ── Source ─────────────────────────────────────────────────────────────
     - name: Download Z3 source
