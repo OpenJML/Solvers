@@ -268,7 +268,23 @@ jobs:
         p.write_text(t)
         "
 
-        ## 2b. (Windows platform fix handled in Generate Makefile step via runpy)
+        ## 2b. Windows: patch mk_util.py ar check to use ar.exe.
+        ##     z3 4.3.2 hardcodes which('ar') — MinGW64 has ar.exe not ar,
+        ##     so we change the check to look for ar.exe directly.
+        case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
+            python3 -c "
+        import pathlib
+        p = pathlib.Path('scripts/mk_util.py')
+        if p.exists():
+            t = p.read_text(errors='replace')
+            new_t = (t.replace(\"which('ar')== None\", \"which('ar.exe') is None\")
+                      .replace(\"which('ar') == None\", \"which('ar.exe') is None\")
+                      .replace(\"which('ar') is None\", \"which('ar.exe') is None\"))
+            if new_t != t:
+                p.write_text(new_t)
+                print('Fixed ar check in mk_util.py for Windows')
+            "
+        ;; esac
 
         ## 3. Fix sorted(cnames, cmp=...) missed by 2to3.
         python3 -c "
@@ -339,6 +355,20 @@ jobs:
         print('Patched UINT64_MAX cast in mpz.cpp')
             "
         fi
+
+        ## 5b. Fix m_low_bound typo in z3 4.8.x column_info.h.
+        ##     The member is m_lower_bound; newer GCC rejects the wrong name in
+        ##     a template body as an error rather than silently ignoring it.
+        python3 -c "
+        import pathlib
+        p = pathlib.Path('src/math/lp/column_info.h')
+        if p.exists():
+            t = p.read_text(errors='replace')
+            new_t = t.replace('c.m_low_bound', 'c.m_lower_bound')
+            if new_t != t:
+                p.write_text(new_t)
+                print('Fixed m_low_bound typo in column_info.h')
+        "
 
         ## 6. Re-encode any Latin-1 bytes in C++ source files to UTF-8.
         python3 -c "
