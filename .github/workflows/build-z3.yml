@@ -406,7 +406,7 @@ jobs:
         MINGW*|MSYS*|CYGWIN*)
             printf '%s\n' \
               'CC=gcc' 'PREFIX=C:/z3' 'CXX=g++' \
-              "CXXFLAGS= -c -O3 -std=c++20 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL ${STUB_INC} -fomit-frame-pointer" \
+              "CXXFLAGS= -c -O3 -std=c++20 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL -D_WINDOWS ${STUB_INC} -fomit-frame-pointer" \
               'CXX_OUT_FLAG=-o' 'OBJ_EXT=.o' 'LIB_EXT=.a' \
               'AR=ar' 'AR_FLAGS=rcs' 'AR_OUTFLAG=' 'EXE_EXT=.exe' \
               'LINK=g++' 'LINK_FLAGS=-static-libstdc++ -static-libgcc' \
