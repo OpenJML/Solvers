@@ -374,10 +374,11 @@ jobs:
 
         ## 5b. Fix template-body bugs in z3 4.8.x LP math headers.
         ##     static_matrix.h:83 calls .get() which doesn't exist; should be .get_elem().
-        ##     tail_matrix.h:46 has a similar issue inside #ifdef Z3DEBUG; strip
-        ##     that define from the Makefile so the debug code isn't compiled.
+        ##     tail_matrix.h:46 calls get_elem() on tail_matrix (abstract) which never
+        ##     declares it — broken debug-only code. Replace with a no-op stub.
         python3 -c "
         import pathlib
+        # static_matrix.h:83 calls .get() which doesn't exist — fix to .get_elem()
         p = pathlib.Path('src/math/lp/static_matrix.h')
         if p.exists():
             t = p.read_text(errors='replace')
@@ -386,6 +387,16 @@ jobs:
             if new_t != t:
                 p.write_text(new_t)
                 print('Fixed static_matrix.h .get() -> .get_elem()')
+        # tail_matrix.h:46 calls get_elem on abstract tail_matrix (no such method)
+        # inside debug-only #ifdef Z3DEBUG — replace with no-op stub
+        p = pathlib.Path('src/math/lp/tail_matrix.h')
+        if p.exists():
+            t = p.read_text(errors='replace')
+            new_t = t.replace('return m_A.get_elem(m_row, j);',
+                              '(void)j; return T();  // stub: get_elem not on tail_matrix')
+            if new_t != t:
+                p.write_text(new_t)
+                print('Fixed tail_matrix.h broken get_elem debug call')
         "
 
         ## 5c. Fix m_low_bound typo in z3 4.8.x column_info.h.
@@ -607,7 +618,12 @@ jobs:
             /tmp/build_out.txt | head -15 | while IFS= read -r line; do
             echo "::error::$line"
         done
-        [ $ec -ne 0 ] && { echo "=== build output (last 30 lines) ==="; tail -30 /tmp/build_out.txt; }
+        if [ $ec -ne 0 ]; then
+            echo "=== build output: first errors ==="
+            grep -m 20 "error:" /tmp/build_out.txt || true
+            echo "=== build output: last 30 lines ==="
+            tail -30 /tmp/build_out.txt
+        fi
         set -e; exit $ec
 
     ## ── Verify ─────────────────────────────────────────────────────────────
