@@ -239,9 +239,12 @@ jobs:
         "
 
         ## 1. Convert Python 2 syntax; fix tab/space mixing.
-        2to3 -w scripts/ src/api/python/ > /dev/null 2>&1
+        ## 2to3 may exit 1 on z3 ≥ 4.8 whose Python scripts already use Python 3
+        ## syntax (f-strings etc.) that 2to3's Python-2 parser cannot read.
+        ## In that case the scripts are already Python 3 compatible — skip silently.
+        2to3 -w scripts/ src/api/python/ > /dev/null 2>&1 || true
         for f in scripts/*.py src/api/python/*.py; do
-            expand -t 8 "$f" > /tmp/pf && mv /tmp/pf "$f"
+            [ -f "$f" ] && { expand -t 8 "$f" > /tmp/pf && mv /tmp/pf "$f"; } || true
         done
 
         ## 2. Skip non-Linux Makefile targets from mk_make.py.
@@ -352,7 +355,7 @@ jobs:
         Darwin)
             printf '%s\n' \
               "CC=clang" "PREFIX=/usr/local" "CXX=clang++" \
-              "CXXFLAGS= -c -O2 -std=c++17 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL ${STUB_INC} -fpermissive -Wno-c++11-extensions -fomit-frame-pointer" \
+              "CXXFLAGS= -c -O2 -std=c++20 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL ${STUB_INC} -fpermissive -Wno-c++11-extensions -fomit-frame-pointer" \
               'CXX_OUT_FLAG=-o' 'OBJ_EXT=.o' 'LIB_EXT=.a' \
               'AR=ar' 'AR_FLAGS=rcs' 'AR_OUTFLAG=' 'EXE_EXT=' \
               'LINK=clang++' 'LINK_FLAGS=' \
@@ -363,7 +366,7 @@ jobs:
         MINGW*|MSYS*|CYGWIN*)
             printf '%s\n' \
               'CC=gcc' 'PREFIX=C:/z3' 'CXX=g++' \
-              "CXXFLAGS= -c -O3 -std=c++17 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL ${STUB_INC} -fomit-frame-pointer" \
+              "CXXFLAGS= -c -O3 -std=c++20 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL ${STUB_INC} -fomit-frame-pointer" \
               'CXX_OUT_FLAG=-o' 'OBJ_EXT=.o' 'LIB_EXT=.a' \
               'AR=ar' 'AR_FLAGS=rcs' 'AR_OUTFLAG=' 'EXE_EXT=.exe' \
               'LINK=g++' 'LINK_FLAGS=-static-libstdc++ -static-libgcc' \
@@ -381,7 +384,12 @@ jobs:
               'LINK_OUT_FLAG=-o' 'LINK_EXTRA_FLAGS=-lpthread -lrt' \
               'SO_EXT=.so' 'SLINK=g++' 'SLINK_FLAGS=-shared' \
               'SLINK_EXTRA_FLAGS=' 'SLINK_OUT_FLAG=-o' \
-              > scripts/config-release.mk ;;
+              > scripts/config-release.mk
+            ## Replace the Linux CXXFLAGS -std=c++17 with -std=c++2a.
+            ## GCC 9 (ubuntu:20.04) supports the draft alias c++2a but not the
+            ## final c++20 flag; c++2a is identical to c++20 on GCC 9.
+            sed -i 's/-std=c++17/-std=c++2a/g' scripts/config-release.mk
+            ;;
         esac
         echo "config-release.mk generated"
         cat scripts/config-release.mk
@@ -390,8 +398,12 @@ jobs:
     - name: Generate Z3 Makefile
       run: |
         cd "z3-z3-${{ env.Z3_VERSION }}"
+        ## On Windows, mk_make.py detects MSVC (also on PATH) and generates an
+        ## nmake Makefile.  Force MinGW64 g++ so we get a GNU Makefile.
+        EXTRA_MK_ARGS=""
+        case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) EXTRA_MK_ARGS="--compiler=g++" ;; esac
         set +e
-        python3 -W ignore::SyntaxWarning scripts/mk_make.py > /tmp/mk_out.txt 2>&1
+        python3 -W ignore::SyntaxWarning scripts/mk_make.py $EXTRA_MK_ARGS > /tmp/mk_out.txt 2>&1
         ec=$?
         { grep -E "MKException|Failed to find|Error:|Traceback|raise " /tmp/mk_out.txt 2>/dev/null || true; \
           tail -5 /tmp/mk_out.txt; } | sort -u | while IFS= read -r line; do
@@ -403,6 +415,21 @@ jobs:
         ## On ARM64 these flags cause a hard compiler error.
         ## Use Python (not sed) for reliable regex replacement across all
         ## generated .mk / Makefile files in the build directory.
+        ## GCC 9 (ubuntu:20.04) accepts -std=c++2a but not -std=c++20.
+        ## Newer z3 versions (4.16+) inject -std=c++20 into the generated Makefile;
+        ## replace it with the GCC-9-compatible alias c++2a.
+        if [ $ec -eq 0 ] && g++ --version 2>&1 | grep -q "^g++ .* 9\."; then
+            python3 -c "
+        import pathlib
+        for p in pathlib.Path('build').glob('*'):
+            if p.is_file() and (p.suffix in ('.mk', '.make') or p.name == 'Makefile'):
+                t = p.read_text(errors='replace')
+                new_t = t.replace('-std=c++20', '-std=c++2a')
+                if new_t != t:
+                    p.write_text(new_t)
+                    print('Patched c++20 → c++2a in', p.name)
+            "
+        fi
         if [ $ec -eq 0 ] && [ "$(uname -m)" = "aarch64" ]; then
             python3 -c "
         import pathlib, re
