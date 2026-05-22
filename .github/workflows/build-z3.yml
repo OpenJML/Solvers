@@ -341,6 +341,22 @@ jobs:
             STUB_INC=""
         fi
 
+        ## 4b. Add __MINGW32__ to Windows guards in scoped_timer.cpp.
+        ##     z3 4.3.x guards Windows timer code with defined(_WINDOWS)||defined(_CYGWIN).
+        ##     MinGW64 defines __MINGW32__ but not _WINDOWS, so it falls through to
+        ##     the POSIX timer path which MinGW64 doesn't support.
+        python3 -c "
+        import pathlib
+        p = pathlib.Path('src/util/scoped_timer.cpp')
+        if p.exists():
+            t = p.read_text(errors='replace')
+            new_t = t.replace('defined(_WINDOWS) || defined(_CYGWIN)',
+                              'defined(_WINDOWS) || defined(_CYGWIN) || defined(__MINGW32__)')
+            if new_t != t:
+                p.write_text(new_t)
+                print('Patched scoped_timer.cpp Windows guards for MinGW64')
+        "
+
         ## 5. Linux: cast UINT64_MAX to resolve overload ambiguity.
         ##    On Linux (both x86_64 and arm64), UINT64_MAX is 'unsigned long'
         ##    but Z3's uint64 = 'unsigned long long' — both 64-bit but distinct
