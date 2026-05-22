@@ -9,15 +9,17 @@ run-name: "Build Z3 ${{ inputs.z3_version }}"
 ## The build-z3 convenience script wraps this call.
 ##
 ## Matrix:
-##   ubuntu-arm64   — ubuntu-24.04-arm runner, ubuntu:20.04 container (GCC 9)
-##   ubuntu-x86_64  — ubuntu-24.04     runner, ubuntu:20.04 container (GCC 9)
+##   ubuntu-arm64   — ubuntu-24.04-arm runner, ubuntu:22.04 container (GCC 11)
+##   ubuntu-x86_64  — ubuntu-24.04     runner, ubuntu:22.04 container (GCC 11)
 ##   macos-arm64    — macos-14 runner, native Apple Clang (ARM64)
 ##   macos-x86_64   — macos-14 runner, native Apple Clang via arch -x86_64 (Rosetta)
 ##
-## Z3 4.3.x requires GCC ≤ 9 on Linux (C++ violations in mpq.h rejected by
-## GCC 10+).  We run Linux jobs inside an ubuntu:20.04 container for GCC 9.
-## macOS uses Apple Clang which handles the old code differently (some
-## violations become warnings rather than errors with -fpermissive).
+## ubuntu:22.04 (GCC 11) is used for all Linux jobs.  GCC 11 provides the
+## C++20 <span> header needed by newer z3 versions.  Older z3 (4.3.x) has
+## C++ violations that GCC 10+ would reject as errors, but -fpermissive
+## downgrades these to warnings just as macOS Apple Clang does.
+## Newer z3 (detected by #include <span> in the source) uses CMake; older
+## z3 uses the Python mk_make.py build system.
 ##
 ## A single release is created once by the 'prepare' job; every platform's
 ## binary is uploaded to that same release.  The tag is based on the Z3
@@ -72,11 +74,11 @@ jobs:
         include:
           - runner:    ubuntu-24.04-arm
             label:     ubuntu-24.04-arm64
-            container: ubuntu:20.04
+            container: ubuntu:22.04
             arch_cmd:  ''
           - runner:    ubuntu-24.04
             label:     ubuntu-24.04-x86_64
-            container: ubuntu:20.04
+            container: ubuntu:22.04
             arch_cmd:  ''
           - runner:    macos-14
             label:     macos-14-arm64
@@ -128,7 +130,7 @@ jobs:
       run: |
         apt-get update -qq
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
-          python3 python3-distutils 2to3 build-essential curl ca-certificates jq
+          python3 python3-distutils 2to3 build-essential cmake curl ca-certificates jq
         curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
           | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
         echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
@@ -148,7 +150,7 @@ jobs:
     - name: Install build dependencies (macOS)
       if: runner.os == 'macOS'
       run: |
-        ## Xcode command-line tools are pre-installed; ensure gh is available.
+        ## Xcode command-line tools and cmake are pre-installed; ensure gh is available.
         brew install gh || true
         ## 2to3 ships with Python 3 on macOS.
         which 2to3 || pip3 install 2to3 || true
@@ -404,7 +406,7 @@ jobs:
         *)
             printf '%s\n' \
               'CC=gcc' 'PREFIX=/usr/local' 'CXX=g++' \
-              "CXXFLAGS= -c -O3 -std=c++2a -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL ${STUB_INC} -fomit-frame-pointer" \
+              "CXXFLAGS= -c -O3 -std=c++2a -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL ${STUB_INC} -fpermissive -fomit-frame-pointer" \
               'CXX_OUT_FLAG=-o' 'OBJ_EXT=.o' 'LIB_EXT=.a' \
               'AR=ar' 'AR_FLAGS=rcs' 'AR_OUTFLAG=' 'EXE_EXT=' \
               'LINK=g++' 'LINK_FLAGS=-static-libstdc++ -static-libgcc' \
@@ -419,8 +421,20 @@ jobs:
         echo "config-release.mk generated"
         cat scripts/config-release.mk
 
-    ## ── Generate Makefile ─────────────────────────────────────────────────
+        ## 8. Detect whether the source requires C++20 <span> (not in GCC 9
+        ##    libstdc++).  If so, use CMake; otherwise use the Python mk_make.py
+        ##    build system.  This is version-agnostic: it inspects the source.
+        if grep -rq '#include[[:space:]]*<span>' src/ 2>/dev/null; then
+            echo "USE_CMAKE=true"  >> "$GITHUB_ENV"
+            echo "Source uses <span> — will build with CMake"
+        else
+            echo "USE_CMAKE=false" >> "$GITHUB_ENV"
+            echo "Source does not use <span> — will build with mk_make.py"
+        fi
+
+    ## ── Generate Makefile (mk_make.py path) ──────────────────────────────
     - name: Generate Z3 Makefile
+      if: env.USE_CMAKE != 'true'
       run: |
         cd "z3-z3-${{ env.Z3_VERSION }}"
         ## On Windows, mk_make.py may detect MSVC and generate an nmake Makefile.
@@ -486,13 +500,38 @@ jobs:
         fi
         exit $ec
 
+    ## ── Configure with CMake (newer z3 that uses <span>) ────────────────────
+    - name: Configure Z3 with CMake
+      if: env.USE_CMAKE == 'true'
+      run: |
+        cd "z3-z3-${{ env.Z3_VERSION }}"
+        ARCH_CMD="${{ matrix.arch_cmd }}"
+        ## Common cmake flags for all platforms.
+        CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=20 -DZ3_BUILD_LIBZ3_SHARED=OFF"
+        case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*)
+            ## Force MinGW64 g++ and Unix Makefile generator (avoids MSVC detection).
+            $ARCH_CMD cmake -B build -G "Unix Makefiles" $CMAKE_ARGS \
+                -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
+                -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc -Wl,-Bstatic -lpthread -Wl,-Bdynamic"
+            ;;
+        *)
+            $ARCH_CMD cmake -B build $CMAKE_ARGS
+            ;;
+        esac
+
     ## ── Build ──────────────────────────────────────────────────────────────
     - name: Build Z3
       run: |
         ARCH_CMD="${{ matrix.arch_cmd }}"
         JOBS=$(nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
         set +e
-        $ARCH_CMD make -j"$JOBS" -C "z3-z3-${{ env.Z3_VERSION }}/build" z3 > /tmp/build_out.txt 2>&1
+        if [ "$USE_CMAKE" = "true" ]; then
+            $ARCH_CMD cmake --build "z3-z3-${{ env.Z3_VERSION }}/build" \
+                --target z3 -j"$JOBS" > /tmp/build_out.txt 2>&1
+        else
+            $ARCH_CMD make -j"$JOBS" -C "z3-z3-${{ env.Z3_VERSION }}/build" z3 > /tmp/build_out.txt 2>&1
+        fi
         ec=$?
         grep -E "undefined reference|error:|ld returned|ld: error" /tmp/build_out.txt \
           | head -15 | while IFS= read -r line; do
