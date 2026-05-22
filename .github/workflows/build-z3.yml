@@ -372,7 +372,23 @@ jobs:
             "
         fi
 
-        ## 5b. Fix m_low_bound typo in z3 4.8.x column_info.h.
+        ## 5b. Fix template-body bugs in z3 4.8.x LP math headers.
+        ##     static_matrix.h:83 calls .get() which doesn't exist; should be .get_elem().
+        ##     tail_matrix.h:46 has a similar issue inside #ifdef Z3DEBUG; strip
+        ##     that define from the Makefile so the debug code isn't compiled.
+        python3 -c "
+        import pathlib
+        p = pathlib.Path('src/math/lp/static_matrix.h')
+        if p.exists():
+            t = p.read_text(errors='replace')
+            new_t = t.replace('v.m_matrix.get(v.m_row, v.m_col)',
+                              'v.m_matrix.get_elem(v.m_row, v.m_col)')
+            if new_t != t:
+                p.write_text(new_t)
+                print('Fixed static_matrix.h .get() -> .get_elem()')
+        "
+
+        ## 5c. Fix m_low_bound typo in z3 4.8.x column_info.h.
         ##     The member is m_lower_bound; newer GCC rejects the wrong name in
         ##     a template body as an error rather than silently ignoring it.
         python3 -c "
@@ -519,7 +535,9 @@ jobs:
             if p.is_file() and (p.suffix in ('.mk', '.make') or p.name == 'Makefile'):
                 t = p.read_text(errors='replace')
                 new_t = t.replace('-std=c++17', '-std=' + target) \
-                         .replace('-std=c++20', '-std=' + target)
+                         .replace('-std=c++20', '-std=' + target) \
+                         .replace('-DZ3DEBUG', '') \
+                         .replace('-D Z3DEBUG', '')
                 if new_t != t:
                     p.write_text(new_t)
                     print('Patched C++ standard to', target, 'in', p.name)
