@@ -266,6 +266,27 @@ jobs:
         p.write_text(t)
         "
 
+        ## 2b. Windows (MSYS2): patch platform.system() in mk_make.py so it
+        ##     generates a GNU Makefile for MinGW64 rather than an nmake Makefile.
+        ##     Python inside MSYS2 is a Windows process — platform.system() returns
+        ##     'Windows' — so mk_make.py uses nmake format even when we pass
+        ##     --compiler=g++.  Replacing the two key comparisons fixes this.
+        case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
+            python3 -c "
+        import pathlib
+        for fname in ('scripts/mk_make.py', 'scripts/mk_util.py'):
+            p = pathlib.Path(fname)
+            if not p.exists():
+                continue
+            t = p.read_text(errors='replace')
+            new_t = (t.replace(\"platform.system() == 'Windows'\", 'False')
+                      .replace(\"platform.system() == 'Linux'\", 'True'))
+            if new_t != t:
+                p.write_text(new_t)
+                print('Patched platform detection in', fname)
+            "
+        ;; esac
+
         ## 3. Fix sorted(cnames, cmp=...) missed by 2to3.
         python3 -c "
         import pathlib
