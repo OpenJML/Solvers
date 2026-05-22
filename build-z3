@@ -19,7 +19,14 @@ if [ "$LOCAL" != "$REMOTE" ]; then
     exit 1
 fi
 
+RES=0
 for v in "$@" ; do
-    echo "Triggering build for z3 $v ..."
-    gh workflow run build-z3.yml --repo OpenJML/Solvers --ref build --field z3_version="$v"
+    printf "Triggering build for z3 %s ... " "$v"
+    if gh workflow run build-z3.yml --repo OpenJML/Solvers --ref build --field z3_version="$v" > /dev/null; then
+        echo "OK"
+    else
+        echo "FAILED" >&2
+        RES=1
+    fi
 done
+exit $RES
