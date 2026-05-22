@@ -230,7 +230,7 @@ jobs:
         t = p.read_text(errors='replace')
         t = t.replace('import distutils.sysconfig',
                       'import sysconfig as _sysconfig_mod')
-        t = re.sub(r'distutils\.sysconfig\.get_python_lib\([^)]*\)',
+        t = re.sub(r'distutils\.sysconfig\.get_python_lib\((?:[^()]*|\([^()]*\))*\)',
                    '_sysconfig_mod.get_path(\"purelib\")', t)
         t = re.sub(r'distutils\.sysconfig\.get_python_version\(\)',
                    '_sysconfig_mod.get_python_version()', t)
@@ -383,19 +383,17 @@ jobs:
         *)
             printf '%s\n' \
               'CC=gcc' 'PREFIX=/usr/local' 'CXX=g++' \
-              "CXXFLAGS= -c -O3 -std=c++17 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL ${STUB_INC} -fomit-frame-pointer" \
+              "CXXFLAGS= -c -O3 -std=c++2a -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL ${STUB_INC} -fomit-frame-pointer" \
               'CXX_OUT_FLAG=-o' 'OBJ_EXT=.o' 'LIB_EXT=.a' \
               'AR=ar' 'AR_FLAGS=rcs' 'AR_OUTFLAG=' 'EXE_EXT=' \
               'LINK=g++' 'LINK_FLAGS=-static-libstdc++ -static-libgcc' \
               'LINK_OUT_FLAG=-o' 'LINK_EXTRA_FLAGS=-lpthread -lrt' \
               'SO_EXT=.so' 'SLINK=g++' 'SLINK_FLAGS=-shared' \
               'SLINK_EXTRA_FLAGS=' 'SLINK_OUT_FLAG=-o' \
-              > scripts/config-release.mk
-            ## Replace the Linux CXXFLAGS -std=c++17 with -std=c++2a.
-            ## GCC 9 (ubuntu:20.04) supports the draft alias c++2a but not the
-            ## final c++20 flag; c++2a is identical to c++20 on GCC 9.
-            sed -i 's/-std=c++17/-std=c++2a/g' scripts/config-release.mk
-            ;;
+              > scripts/config-release.mk ;;
+            ## Note: GCC 9 (ubuntu:20.04) uses -std=c++2a (the draft alias for
+            ## c++20).  The Generate Makefile step also patches any -std=c++17
+            ## injected by mk_make.py into the generated files to c++2a.
         esac
         echo "config-release.mk generated"
         cat scripts/config-release.mk
@@ -404,10 +402,16 @@ jobs:
     - name: Generate Z3 Makefile
       run: |
         cd "z3-z3-${{ env.Z3_VERSION }}"
-        ## On Windows, mk_make.py detects MSVC (also on PATH) and generates an
-        ## nmake Makefile.  Force MinGW64 g++ so we get a GNU Makefile.
+        ## On Windows, mk_make.py may detect MSVC and generate an nmake Makefile.
+        ## Force MinGW64 g++ by setting CXX/CC env vars (works for all z3 versions)
+        ## and also --compiler=g++ for older z3 that supports that flag.
+        ## Newer z3 (4.16+) dropped --compiler; detect support via --help.
         EXTRA_MK_ARGS=""
-        case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) EXTRA_MK_ARGS="--compiler=g++" ;; esac
+        case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
+            export CXX=g++ CC=gcc
+            python3 scripts/mk_make.py --help 2>&1 | grep -q -- "--compiler" \
+                && EXTRA_MK_ARGS="--compiler=g++"
+            ;; esac
         set +e
         python3 -W ignore::SyntaxWarning scripts/mk_make.py $EXTRA_MK_ARGS > /tmp/mk_out.txt 2>&1
         ec=$?
@@ -421,19 +425,26 @@ jobs:
         ## On ARM64 these flags cause a hard compiler error.
         ## Use Python (not sed) for reliable regex replacement across all
         ## generated .mk / Makefile files in the build directory.
-        ## GCC 9 (ubuntu:20.04) accepts -std=c++2a but not -std=c++20.
-        ## Newer z3 versions (4.16+) inject -std=c++20 into the generated Makefile;
-        ## replace it with the GCC-9-compatible alias c++2a.
-        if [ $ec -eq 0 ] && g++ --version 2>&1 | grep -q "^g++ .* 9\."; then
+        ## Patch C++ standard in generated Makefile files.
+        ## mk_make.py may hard-code -std=c++17 regardless of config-release.mk.
+        ## GCC 9 (ubuntu:20.04) uses -std=c++2a (= c++20 draft); all others c++20.
+        if [ $ec -eq 0 ]; then
+            if g++ --version 2>&1 | grep -q "^g++ .* 9\."; then
+                CXX_STD="c++2a"
+            else
+                CXX_STD="c++20"
+            fi
             python3 -c "
         import pathlib
+        target = '${CXX_STD}'
         for p in pathlib.Path('build').glob('*'):
             if p.is_file() and (p.suffix in ('.mk', '.make') or p.name == 'Makefile'):
                 t = p.read_text(errors='replace')
-                new_t = t.replace('-std=c++20', '-std=c++2a')
+                new_t = t.replace('-std=c++17', '-std=' + target) \
+                         .replace('-std=c++20', '-std=' + target)
                 if new_t != t:
                     p.write_text(new_t)
-                    print('Patched c++20 → c++2a in', p.name)
+                    print('Patched C++ standard to', target, 'in', p.name)
             "
         fi
         if [ $ec -eq 0 ] && [ "$(uname -m)" = "aarch64" ]; then
