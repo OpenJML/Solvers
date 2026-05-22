@@ -1,4 +1,5 @@
 name: Build Z3 Solver
+run-name: "Build Z3 ${{ inputs.z3_version }}"
 
 ## Builds Z3 from source for multiple platforms and publishes each binary
 ## as a GitHub release asset.  Z3 version is parameterised.
