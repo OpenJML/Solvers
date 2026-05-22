@@ -9,14 +9,14 @@ run-name: "Build Z3 ${{ inputs.z3_version }}"
 ## The build-z3 convenience script wraps this call.
 ##
 ## Matrix:
-##   ubuntu-arm64   — ubuntu-24.04-arm runner, ubuntu:22.04 container (GCC 11)
-##   ubuntu-x86_64  — ubuntu-24.04     runner, ubuntu:22.04 container (GCC 11)
+##   ubuntu-arm64   — ubuntu-24.04-arm runner, ubuntu:24.04 container (GCC 13)
+##   ubuntu-x86_64  — ubuntu-24.04     runner, ubuntu:24.04 container (GCC 13)
 ##   macos-arm64    — macos-14 runner, native Apple Clang (ARM64)
 ##   macos-x86_64   — macos-14 runner, native Apple Clang via arch -x86_64 (Rosetta)
 ##
-## ubuntu:22.04 (GCC 11) is used for all Linux jobs.  GCC 11 provides the
-## C++20 <span> header needed by newer z3 versions.  Older z3 (4.3.x) has
-## C++ violations that GCC 10+ would reject as errors, but -fpermissive
+## ubuntu:24.04 (GCC 13) is used for all Linux jobs.  GCC 13 provides the
+## C++20 <format> and <span> headers required by z3 >= ~4.12.  Older z3
+## (4.3.x) has C++ violations that strict GCC rejects, but -fpermissive
 ## downgrades these to warnings just as macOS Apple Clang does.
 ## Newer z3 (detected by #include <span> in the source) uses CMake; older
 ## z3 uses the Python mk_make.py build system.
@@ -74,11 +74,11 @@ jobs:
         include:
           - runner:    ubuntu-24.04-arm
             label:     ubuntu-24.04-arm64
-            container: ubuntu:22.04
+            container: ubuntu:24.04
             arch_cmd:  ''
           - runner:    ubuntu-24.04
             label:     ubuntu-24.04-x86_64
-            container: ubuntu:22.04
+            container: ubuntu:24.04
             arch_cmd:  ''
           - runner:    macos-14
             label:     macos-14-arm64
@@ -130,7 +130,7 @@ jobs:
       run: |
         apt-get update -qq
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
-          python3 python3-distutils 2to3 build-essential cmake curl ca-certificates jq file
+          python3 python3-setuptools 2to3 build-essential cmake curl ca-certificates jq file
         curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
           | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
         echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
@@ -268,27 +268,17 @@ jobs:
         p.write_text(t)
         "
 
-        ## 2b. Windows (MSYS2): patch platform.system() in mk_make.py so it
-        ##     generates a GNU Makefile for MinGW64 rather than an nmake Makefile.
-        ##     Python inside MSYS2 is a Windows process — platform.system() returns
-        ##     'Windows' — so mk_make.py uses nmake format even when we pass
-        ##     --compiler=g++.  Replacing the two key comparisons fixes this.
+        ## 2b. Windows (MSYS2): mk_make.py calls platform.system() to detect the
+        ##     OS and emits nmake/MSVC format when it returns 'Windows'.  Source
+        ##     patching is fragile (z3 uses varied forms).  Instead, write a
+        ##     sitecustomize.py that Python executes at startup before any imports,
+        ##     patching platform.system to return 'Linux' so mk_make.py emits a
+        ##     GNU Makefile for MinGW64.  PYTHONPATH is set in the Generate step.
         case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
-            python3 -c "
-        import pathlib
-        for fname in ('scripts/mk_make.py', 'scripts/mk_util.py'):
-            p = pathlib.Path(fname)
-            if not p.exists():
-                continue
-            t = p.read_text(errors='replace')
-            new_t = (t.replace(\"platform.system() == 'Windows'\", 'False')
-                      .replace('platform.system() == \"Windows\"', 'False')
-                      .replace(\"platform.system() == 'Linux'\", 'True')
-                      .replace('platform.system() == \"Linux\"', 'True'))
-            if new_t != t:
-                p.write_text(new_t)
-                print('Patched platform detection in', fname)
-            "
+            mkdir -p /tmp/z3site
+            printf 'import platform\nplatform.system = lambda: "Linux"\n' \
+                > /tmp/z3site/sitecustomize.py
+            echo "Created sitecustomize.py to override platform.system()"
         ;; esac
 
         ## 3. Fix sorted(cnames, cmp=...) missed by 2to3.
@@ -449,6 +439,12 @@ jobs:
             python3 scripts/mk_make.py --help 2>&1 | grep -q -- "--compiler" \
                 && EXTRA_MK_ARGS="--compiler=g++"
             ;; esac
+        ## On Windows, prepend /tmp/z3site to PYTHONPATH so Python loads
+        ## sitecustomize.py (created in Patch step) before mk_make.py runs,
+        ## overriding platform.system() to return 'Linux' and generate a GNU Makefile.
+        case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
+            export PYTHONPATH="/tmp/z3site${PYTHONPATH:+:$PYTHONPATH}"
+        ;; esac
         set +e
         python3 -W ignore::SyntaxWarning scripts/mk_make.py $EXTRA_MK_ARGS > /tmp/mk_out.txt 2>&1
         ec=$?
