@@ -1,0 +1,3 @@
+
+
+gh workflow run build-z3.yml --repo OpenJML/Solvers --ref build --field z3_version=$1
