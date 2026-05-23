@@ -351,6 +351,8 @@ jobs:
         ##     tail_matrix.h: ref_row::operator[] calls m_A.get_elem() but tail_matrix has
         ##     no get_elem without Z3DEBUG. Replace with return T(); using a block comment
         ##     so the closing } on the same source line is not accidentally commented out.
+        ##     static_matrix_def.h: calls get_value_of_column_cell which was renamed to
+        ##     get_val in the header; Apple Clang 16+ rejects the missing member.
         python3 -c "
         import pathlib
         # static_matrix.h:83 calls .get() which doesn't exist — fix to .get_elem()
@@ -373,6 +375,15 @@ jobs:
             if new_t != t:
                 p.write_text(new_t)
                 print('Fixed tail_matrix.h broken get_elem debug call')
+        # static_matrix_def.h calls get_value_of_column_cell which was renamed get_val
+        # in the header; Apple Clang 16+ (macos-15) catches the missing member.
+        p = pathlib.Path('src/math/lp/static_matrix_def.h')
+        if p.exists():
+            t = p.read_text(errors='replace')
+            new_t = t.replace('get_value_of_column_cell', 'get_val')
+            if new_t != t:
+                p.write_text(new_t)
+                print('Fixed get_value_of_column_cell -> get_val in static_matrix_def.h')
         "
 
         ## 5c. Fix m_low_bound typo in z3 4.8.x column_info.h.
@@ -387,6 +398,28 @@ jobs:
             if new_t != t:
                 p.write_text(new_t)
                 print('Fixed m_low_bound typo in column_info.h')
+        "
+
+        ## 5d. Fix obj_hashtable.h: key_data(k, v) uses C++20 parenthesised aggregate
+        ##     initialisation (P0960R3) which Apple Clang 15 (macos-14) does not support.
+        ##     Add explicit constructors so the call compiles under C++17 and C++20 alike.
+        python3 -c "
+        import pathlib
+        p = pathlib.Path('src/util/obj_hashtable.h')
+        if p.exists():
+            t = p.read_text(errors='replace')
+            old = ('        Key * m_key = nullptr;\n'
+                   '        Value m_value;\n'
+                   '        Value const & get_value')
+            new = ('        Key * m_key = nullptr;\n'
+                   '        Value m_value;\n'
+                   '        key_data() = default;\n'
+                   '        key_data(Key * k, Value const & v) : m_key(k), m_value(v) {}\n'
+                   '        key_data(Key * k, Value && v) : m_key(k), m_value(std::move(v)) {}\n'
+                   '        Value const & get_value')
+            if old in t:
+                p.write_text(t.replace(old, new))
+                print('Added key_data constructors in obj_hashtable.h')
         "
 
         ## 6. Re-encode any Latin-1 bytes in C++ source files to UTF-8.
@@ -408,14 +441,19 @@ jobs:
         ## 7. Generate scripts/config-release.mk.
         ##    mk_make.py uses this file to set compiler flags instead of auto-detecting.
         ARCH_CMD="${{ matrix.arch_cmd }}"
+        ## On Apple Silicon runners building for x86_64, arch -x86_64 does not reliably
+        ## make clang++ target x86_64 — the physical CPU is arm64 and clang++ defaults to
+        ## that unless told otherwise.  Pass -arch x86_64 explicitly so every compilation
+        ## and link step targets x86_64 regardless of the CPU the binary runs on.
+        [ -n "${ARCH_CMD}" ] && ARCH_FLAGS="-arch x86_64" || ARCH_FLAGS=""
         case "$(uname -s)" in
         Darwin)
             printf '%s\n' \
               "CC=clang" "PREFIX=/usr/local" "CXX=clang++" \
-              "CXXFLAGS= -c -O2 -std=c++20 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL ${STUB_INC} -fpermissive -Wno-c++11-extensions -fomit-frame-pointer -mmacosx-version-min=${{ matrix.macos_target }}" \
+              "CXXFLAGS= -c -O2 -std=c++20 ${ARCH_FLAGS} -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL ${STUB_INC} -fpermissive -Wno-c++11-extensions -fomit-frame-pointer -mmacosx-version-min=${{ matrix.macos_target }}" \
               'CXX_OUT_FLAG=-o' 'OBJ_EXT=.o' 'LIB_EXT=.a' \
               'AR=ar' 'AR_FLAGS=rcs' 'AR_OUTFLAG=' 'EXE_EXT=' \
-              "LINK=clang++" "LINK_FLAGS=-mmacosx-version-min=${{ matrix.macos_target }}" \
+              "LINK=clang++" "LINK_FLAGS=${ARCH_FLAGS} -mmacosx-version-min=${{ matrix.macos_target }}" \
               'LINK_OUT_FLAG=-o' 'LINK_EXTRA_FLAGS=-lpthread' \
               'SO_EXT=.dylib' 'SLINK=clang++' 'SLINK_FLAGS=-dynamiclib' \
               'SLINK_EXTRA_FLAGS=' 'SLINK_OUT_FLAG=-o' \
@@ -488,7 +526,8 @@ jobs:
             "
         fi
         ## Remove x86-only SIMD flags on ARM64 — these cause a hard compiler error.
-        if [ $ec -eq 0 ] && [ "$(uname -m)" = "aarch64" ]; then
+        ## macOS arm64 reports "arm64" from uname -m; Linux arm64 reports "aarch64".
+        if [ $ec -eq 0 ] && { [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; }; then
             python3 -c "
         import pathlib, re
         flags = re.compile(r'-mfpmath=sse|-msse2|-msse(?!\d)')
