@@ -10,10 +10,15 @@ run-name: "Build Z3 ${{ inputs.z3_version }}"
 ## For Windows binaries use build-win.yml / build-win convenience script.
 ##
 ## Matrix:
-##   ubuntu-arm64   — ubuntu-24.04-arm runner, ubuntu:24.04 container (GCC 13)
-##   ubuntu-x86_64  — ubuntu-24.04     runner, ubuntu:24.04 container (GCC 13)
-##   macos-arm64    — macos-15 runner, native Apple Clang (ARM64)
-##   macos-x86_64   — macos-15 runner, native Apple Clang via arch -x86_64 (Rosetta)
+##   ubuntu-arm64      — ubuntu-24.04-arm runner, ubuntu:24.04 container (GCC 13)
+##   ubuntu-x86_64     — ubuntu-24.04     runner, ubuntu:24.04 container (GCC 13)
+##   macos-14-arm64    — macos-14 runner, Apple Clang, deployment target 14
+##   macos-14-x86_64   — macos-14 runner, Apple Clang via arch -x86_64, deployment target 14
+##   macos-15-arm64    — macos-15 runner, Apple Clang, deployment target 15
+##   macos-15-x86_64   — macos-15 runner, Apple Clang via arch -x86_64, deployment target 15
+##
+## Each macOS binary is built with -mmacosx-version-min matching its runner so
+## the deployment target is embedded in the binary and the asset name reflects it.
 ##
 ## ubuntu:24.04 (GCC 13) is used for all Linux jobs.  GCC 13 provides the
 ## C++20 <format> and <span> headers required by z3 >= ~4.12.  Older z3
@@ -64,7 +69,7 @@ jobs:
           --repo "${{ github.repository }}" \
           --title "$title" \
           --draft \
-          --notes "Z3 ${ver} binaries for ubuntu-arm64, ubuntu-x86_64, macos-arm64, macos-x86_64. Built from https://github.com/Z3Prover/z3/releases/tag/z3-${ver}."
+          --notes "Z3 ${ver} binaries for ubuntu-arm64, ubuntu-x86_64, macos-14-arm64, macos-14-x86_64, macos-15-arm64, macos-15-x86_64. Built from https://github.com/Z3Prover/z3/releases/tag/z3-${ver}."
 
   ## ── Build matrix ─────────────────────────────────────────────────────────
   build-z3:
@@ -81,14 +86,26 @@ jobs:
             label:     ubuntu-24.04-x86_64
             container: ubuntu:24.04
             arch_cmd:  ''
-          - runner:    macos-15
-            label:     macos-15-arm64
-            container: ''
-            arch_cmd:  ''
-          - runner:    macos-15
-            label:     macos-15-x86_64
-            container: ''
-            arch_cmd:  'arch -x86_64'
+          - runner:       macos-14
+            label:        macos-14-arm64
+            container:    ''
+            arch_cmd:     ''
+            macos_target: '14'
+          - runner:       macos-14
+            label:        macos-14-x86_64
+            container:    ''
+            arch_cmd:     'arch -x86_64'
+            macos_target: '14'
+          - runner:       macos-15
+            label:        macos-15-arm64
+            container:    ''
+            arch_cmd:     ''
+            macos_target: '15'
+          - runner:       macos-15
+            label:        macos-15-x86_64
+            container:    ''
+            arch_cmd:     'arch -x86_64'
+            macos_target: '15'
 
     runs-on: ${{ matrix.runner }}
 
@@ -392,10 +409,10 @@ jobs:
         Darwin)
             printf '%s\n' \
               "CC=clang" "PREFIX=/usr/local" "CXX=clang++" \
-              "CXXFLAGS= -c -O2 -std=c++20 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL ${STUB_INC} -fpermissive -Wno-c++11-extensions -fomit-frame-pointer" \
+              "CXXFLAGS= -c -O2 -std=c++20 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL ${STUB_INC} -fpermissive -Wno-c++11-extensions -fomit-frame-pointer -mmacosx-version-min=${{ matrix.macos_target }}" \
               'CXX_OUT_FLAG=-o' 'OBJ_EXT=.o' 'LIB_EXT=.a' \
               'AR=ar' 'AR_FLAGS=rcs' 'AR_OUTFLAG=' 'EXE_EXT=' \
-              'LINK=clang++' 'LINK_FLAGS=' \
+              "LINK=clang++" "LINK_FLAGS=-mmacosx-version-min=${{ matrix.macos_target }}" \
               'LINK_OUT_FLAG=-o' 'LINK_EXTRA_FLAGS=-lpthread' \
               'SO_EXT=.dylib' 'SLINK=clang++' 'SLINK_FLAGS=-dynamiclib' \
               'SLINK_EXTRA_FLAGS=' 'SLINK_OUT_FLAG=-o' \
@@ -494,11 +511,12 @@ jobs:
         CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=20 -DZ3_BUILD_LIBZ3_SHARED=OFF"
         case "$(uname -s)" in
         Darwin)
-            ## cmake itself is an ARM64 binary on macos-15; running it via
+            ## cmake itself is an ARM64 binary on macos-14/15; running it via
             ## arch -x86_64 would fail.  Instead pass the target architecture
             ## as a cmake flag so the compiler produces x86_64 output.
-            ARCH_EXTRA=""
-            [ -n "${{ matrix.arch_cmd }}" ] && ARCH_EXTRA="-DCMAKE_OSX_ARCHITECTURES=x86_64"
+            ## Also pin the deployment target to match the runner.
+            ARCH_EXTRA="-DCMAKE_OSX_DEPLOYMENT_TARGET=${{ matrix.macos_target }}"
+            [ -n "${{ matrix.arch_cmd }}" ] && ARCH_EXTRA="$ARCH_EXTRA -DCMAKE_OSX_ARCHITECTURES=x86_64"
             cmake -B build $CMAKE_ARGS $ARCH_EXTRA
             ;;
         *)
