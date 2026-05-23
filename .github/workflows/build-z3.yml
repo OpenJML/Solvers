@@ -158,7 +158,8 @@ jobs:
       if: runner.os == 'macOS'
       run: |
         ## Xcode command-line tools and cmake are pre-installed; ensure gh is available.
-        brew install gh || true
+        ## gh is already present on GitHub-hosted macOS runners; upgrade quietly if needed.
+        brew list gh &>/dev/null || brew install gh || true
         ## 2to3 ships with Python 3 on macOS.
         which 2to3 || pip3 install 2to3 || true
         ## setuptools provides distutils, which was removed from the Python stdlib
@@ -400,26 +401,32 @@ jobs:
                 print('Fixed m_low_bound typo in column_info.h')
         "
 
-        ## 5d. Fix obj_hashtable.h: key_data(k, v) uses C++20 parenthesised aggregate
-        ##     initialisation (P0960R3) which Apple Clang 15 (macos-14) does not support.
-        ##     Add explicit constructors so the call compiles under C++17 and C++20 alike.
+        ## 5d. Fix obj_hashtable.h: key_data struct lacks explicit constructors in
+        ##     z3 4.15.x+.  Brace/parenthesised aggregate initialisation of key_data
+        ##     fails on Apple Clang 15 (macos-14) and GCC 13 (ubuntu) alike.
+        ##     Insert explicit constructors before the first getter method, regardless
+        ##     of the exact member-declaration style (= nullptr vs no default, spacing).
         python3 -c "
-        import pathlib
+        import pathlib, re
         p = pathlib.Path('src/util/obj_hashtable.h')
         if p.exists():
             t = p.read_text(errors='replace')
-            old = ('        Key * m_key = nullptr;\n'
-                   '        Value m_value;\n'
-                   '        Value const & get_value')
-            new = ('        Key * m_key = nullptr;\n'
-                   '        Value m_value;\n'
-                   '        key_data() = default;\n'
-                   '        key_data(Key * k, Value const & v) : m_key(k), m_value(v) {}\n'
-                   '        key_data(Key * k, Value && v) : m_key(k), m_value(std::move(v)) {}\n'
-                   '        Value const & get_value')
-            if old in t:
-                p.write_text(t.replace(old, new))
-                print('Added key_data constructors in obj_hashtable.h')
+            if 'key_data(' not in t:
+                ctors = (
+                    '        key_data() = default;\n'
+                    '        key_data(Key * k, Value const & v) : m_key(k), m_value(v) {}\n'
+                    '        key_data(Key * k, Value && v) : m_key(k), m_value(std::move(v)) {}\n'
+                )
+                new_t = re.sub(
+                    r'([ \t]+)(Value\b[^\n]*\bget_value\b)',
+                    lambda m: ctors + m.group(1) + m.group(2),
+                    t, count=1
+                )
+                if new_t != t:
+                    p.write_text(new_t)
+                    print('Added key_data constructors in obj_hashtable.h')
+                else:
+                    print('WARNING: key_data insertion point not found in obj_hashtable.h')
         "
 
         ## 6. Re-encode any Latin-1 bytes in C++ source files to UTF-8.
