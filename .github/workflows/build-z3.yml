@@ -467,7 +467,7 @@ jobs:
         ## Windows uses MSVC nmake Makefiles which use /std:c++20 syntax — skip.
         ## mk_make.py may hard-code -std=c++17 regardless of config-release.mk.
         ## GCC 9 (ubuntu:24.04 replaced it, but kept for safety) uses -std=c++2a.
-        if [ $ec -eq 0 ] && [ "$(uname -s)" != "MINGW64_NT"* ] && case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) false;; *) true;; esac; then
+        if [ $ec -eq 0 ] && case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) false;; *) true;; esac; then
             if g++ --version 2>&1 | grep -q "^g++ .* 9\."; then
                 CXX_STD="c++2a"
             else
