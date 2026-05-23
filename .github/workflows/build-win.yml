@@ -272,7 +272,7 @@ jobs:
         if "%VSDIR%"=="" ( echo ERROR: vswhere found no VS installation & exit /b 1 )
         call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" x64
         if errorlevel 1 ( echo ERROR: vcvars64.bat failed & exit /b 1 )
-        nmake /nologo z3
+        nmake /nologo
 
     ## ── Verify ─────────────────────────────────────────────────────────────
     - name: Verify binary
