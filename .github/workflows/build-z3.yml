@@ -496,14 +496,23 @@ jobs:
         set +e
         python3 -W ignore::SyntaxWarning scripts/mk_make.py > /tmp/mk_out.txt 2>&1
         ec=$?
-        { grep -E "MKException|Failed to find|Error:|Traceback|raise " /tmp/mk_out.txt 2>/dev/null || true; \
-          tail -5 /tmp/mk_out.txt; } | sort -u | while IFS= read -r line; do
-            echo "::error file=scripts/mk_make.py::$line"
-        done
+        grep -E "MKException|Failed to find|Error:|Traceback|raise " /tmp/mk_out.txt 2>/dev/null \
+          | sort -u | while IFS= read -r line; do
+              echo "::error file=scripts/mk_make.py::$line"
+            done || true
+        echo "=== mk_make.py last 5 lines ==="
+        tail -5 /tmp/mk_out.txt
         set -e
+        ## Re-derive ARCH_FLAGS: mk_make.py runs natively on arm64 and may auto-detect
+        ## the native architecture, overriding the -arch x86_64 we put in config-release.mk.
+        ## We patch it back into the generated build/*.mk files below.
+        ARCH_CMD="${{ matrix.arch_cmd }}"
+        [ -n "${ARCH_CMD}" ] && ARCH_FLAGS="-arch x86_64" || ARCH_FLAGS=""
         ## Patch C++ standard in generated Makefile files.
         ## mk_make.py may hard-code -std=c++17 regardless of config-release.mk.
         ## Also strip -DZ3DEBUG to prevent debug-only broken code from compiling.
+        ## Also re-apply -arch: mk_make.py detects native (arm64) arch and embeds it
+        ## in build/config.mk, discarding the -arch x86_64 from config-release.mk.
         if [ $ec -eq 0 ]; then
             if g++ --version 2>&1 | grep -q "^g++ .* 9\."; then
                 CXX_STD="c++2a"
@@ -511,8 +520,9 @@ jobs:
                 CXX_STD="c++20"
             fi
             python3 -c "
-        import pathlib
+        import pathlib, re
         target = '${CXX_STD}'
+        arch_flag = '${ARCH_FLAGS}'
         for p in pathlib.Path('build').glob('*'):
             if p.is_file() and (p.suffix in ('.mk', '.make') or p.name == 'Makefile'):
                 t = p.read_text(errors='replace')
@@ -520,9 +530,13 @@ jobs:
                          .replace('-std=c++20', '-std=' + target) \
                          .replace('-DZ3DEBUG', '') \
                          .replace('-D Z3DEBUG', '')
+                if arch_flag:
+                    new_t = re.sub(r'-arch\s+\S+', '', new_t)
+                    new_t = re.sub(r'^(CXXFLAGS\s*=)', r'\1 ' + arch_flag, new_t, flags=re.MULTILINE)
+                    new_t = re.sub(r'^(LINK_FLAGS\s*=)', r'\1 ' + arch_flag, new_t, flags=re.MULTILINE)
                 if new_t != t:
                     p.write_text(new_t)
-                    print('Patched C++ standard to', target, 'in', p.name)
+                    print('Patched', p.name)
             "
         fi
         ## Remove x86-only SIMD flags on ARM64 — these cause a hard compiler error.

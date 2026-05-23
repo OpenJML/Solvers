@@ -223,10 +223,12 @@ jobs:
         set +e
         python3 -W ignore::SyntaxWarning scripts/mk_make.py --x64 > /tmp/mk_out.txt 2>&1
         ec=$?
-        { grep -E "MKException|Failed to find|Error:|Traceback|raise " /tmp/mk_out.txt 2>/dev/null || true; \
-          tail -5 /tmp/mk_out.txt; } | sort -u | while IFS= read -r line; do
-            echo "::error file=scripts/mk_make.py::$line"
-        done
+        grep -E "MKException|Failed to find|Error:|Traceback|raise " /tmp/mk_out.txt 2>/dev/null \
+          | sort -u | while IFS= read -r line; do
+              echo "::error file=scripts/mk_make.py::$line"
+            done || true
+        echo "=== mk_make.py last 5 lines ==="
+        tail -5 /tmp/mk_out.txt
         exit $ec
 
     ## ── Configure with CMake (newer z3 that uses <span>) ────────────────────
