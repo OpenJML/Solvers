@@ -340,8 +340,9 @@ jobs:
 
         ## 5b. Fix template-body bugs in z3 4.8.x LP math headers.
         ##     static_matrix.h:83 calls .get() which doesn't exist; should be .get_elem().
-        ##     tail_matrix.h:46 calls get_elem() on tail_matrix (abstract) which never
-        ##     declares it — broken debug-only code. Replace with a no-op stub.
+        ##     tail_matrix.h: ref_row::operator[] calls m_A.get_elem() but tail_matrix has
+        ##     no get_elem without Z3DEBUG. Replace with return T(); using a block comment
+        ##     so the closing } on the same source line is not accidentally commented out.
         python3 -c "
         import pathlib
         # static_matrix.h:83 calls .get() which doesn't exist — fix to .get_elem()
@@ -353,13 +354,14 @@ jobs:
             if new_t != t:
                 p.write_text(new_t)
                 print('Fixed static_matrix.h .get() -> .get_elem()')
-        # tail_matrix.h:46 calls get_elem on abstract tail_matrix (no such method)
-        # inside debug-only #ifdef Z3DEBUG — replace with no-op stub
+        # tail_matrix.h: ref_row::operator[] calls m_A.get_elem() but tail_matrix has
+        # no get_elem (only matrix<T,X> does, via #ifdef Z3DEBUG inheritance).
+        # Use a block comment (not //) so the closing } on the same line is not swallowed.
         p = pathlib.Path('src/math/lp/tail_matrix.h')
         if p.exists():
             t = p.read_text(errors='replace')
             new_t = t.replace('return m_A.get_elem(m_row, j);',
-                              '(void)j; return T();  // stub: get_elem not on tail_matrix')
+                              'return T(); /* stub: get_elem not declared on tail_matrix */')
             if new_t != t:
                 p.write_text(new_t)
                 print('Fixed tail_matrix.h broken get_elem debug call')
