@@ -430,7 +430,7 @@ jobs:
             ## injected by mk_make.py into the generated files to c++2a.
         esac
         echo "config-release.mk generated"
-        cat scripts/config-release.mk
+        cat scripts/config-release.mk 2>/dev/null || echo "(none — MSVC auto-configures)"
 
         ## 8. Detect whether the source requires C++20 <span> (not in GCC 9
         ##    libstdc++).  If so, use CMake; otherwise use the Python mk_make.py
