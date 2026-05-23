@@ -19,6 +19,9 @@ on:
         description: 'Z3 version tag to build (e.g. 4.8.12, 4.16.0)'
         required: true
 
+permissions:
+  contents: write
+
 jobs:
 
   ## ── Create the GitHub release ─────────────────────────────────────────────
@@ -243,20 +246,35 @@ jobs:
             cmake --build "z3-z3-${{ env.Z3_VERSION }}/build" \
                 --config Release -j"$JOBS" > /tmp/build_out.txt 2>&1
         else
-            VSDIR=$(cmd /c "vswhere -latest -property installationPath" 2>/dev/null | tr -d '\r\n')
+            VSDIR=$(vswhere -latest -property installationPath 2>/dev/null | tr -d '\r\n')
             BUILDDIR=$(cd "z3-z3-${{ env.Z3_VERSION }}/build" && pwd -W)
-            cmd /c "call \"${VSDIR}\\VC\\Auxiliary\\Build\\vcvars64.bat\" x64 > nul 2>&1 && cd /D \"${BUILDDIR}\" && nmake /nologo z3" > /tmp/build_out.txt 2>&1
+            echo "VS installation: ${VSDIR}"
+            echo "Build directory: ${BUILDDIR}"
+            ## Write a batch file via Python to avoid bash/cmd quoting interactions.
+            ## A quoted cmd /c string with nested > redirections and && chains is
+            ## unreliable from Git Bash; a real .bat file is unambiguous.
+            python3 -c "
+import sys, pathlib
+vsdir, builddir = sys.argv[1], sys.argv[2]
+bat  = '@echo off\r\n'
+bat += 'call \"' + vsdir + '\\\\VC\\\\Auxiliary\\\\Build\\\\vcvars64.bat\" x64\r\n'
+bat += 'if errorlevel 1 exit /b 1\r\n'
+bat += 'cd /D \"' + builddir + '\"\r\n'
+bat += 'nmake /nologo z3\r\n'
+pathlib.Path('/tmp/build_z3.bat').write_bytes(bat.encode('utf-8'))
+" "${VSDIR}" "${BUILDDIR}"
+            cmd /c /tmp/build_z3.bat > /tmp/build_out.txt 2>&1
         fi
         ec=$?
         grep -E "error C[0-9]|error LNK|error MSB|CMake Error|FAILED:" \
             /tmp/build_out.txt | head -15 | while IFS= read -r line; do
             echo "::error::$line"
         done
+        echo "=== build output: last 30 lines ==="
+        tail -30 /tmp/build_out.txt
         if [ $ec -ne 0 ]; then
             echo "=== build output: first errors ==="
             grep -m 20 -i "error" /tmp/build_out.txt || true
-            echo "=== build output: last 30 lines ==="
-            tail -30 /tmp/build_out.txt
         fi
         set -e; exit $ec
 
