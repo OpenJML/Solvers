@@ -9,20 +9,20 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
-## Refuse to trigger a build if local commits on 'build' haven't been pushed
+## Refuse to trigger a build if local commits on 'master' haven't been pushed
 ## to origin — the workflow would run the old code and silently ignore our fixes.
-LOCAL=$(git -C "$(dirname "$0")" rev-parse build 2>/dev/null)
-REMOTE=$(git -C "$(dirname "$0")" rev-parse origin/build 2>/dev/null)
+LOCAL=$(git -C "$(dirname "$0")" rev-parse master 2>/dev/null)
+REMOTE=$(git -C "$(dirname "$0")" rev-parse origin/master 2>/dev/null)
 if [ "$LOCAL" != "$REMOTE" ]; then
-    echo "ERROR: local 'build' branch has unpushed commits (local=$LOCAL, origin=$REMOTE)." >&2
-    echo "       Push first: cd $(dirname "$0") && git push origin build" >&2
+    echo "ERROR: local 'master' branch has unpushed commits (local=$LOCAL, origin=$REMOTE)." >&2
+    echo "       Push first: cd $(dirname "$0") && git push origin master" >&2
     exit 1
 fi
 
 RES=0
 for v in "$@" ; do
     printf "Triggering build windows-only for z3 %s ... " "$v"
-    if gh workflow run build-win.yml --repo OpenJML/Solvers --ref build --field z3_version="$v" > /dev/null; then
+    if gh workflow run build-win.yml --repo OpenJML/Solvers --ref master --field z3_version="$v" > /dev/null; then
         echo "OK"
     else
         echo "FAILED" >&2

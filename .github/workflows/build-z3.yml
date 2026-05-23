@@ -5,7 +5,7 @@ run-name: "Build Z3 ${{ inputs.z3_version }}"
 ## as a GitHub release asset.  Z3 version is parameterised.
 ##
 ## Trigger manually via the GitHub UI or:
-##   gh workflow run build-z3.yml --repo OpenJML/Solvers --ref build --field z3_version=<version>
+##   gh workflow run build-z3.yml --repo OpenJML/Solvers --ref master --field z3_version=<version>
 ## The build-z3 convenience script wraps this call.
 ## For Windows binaries use build-win.yml / build-win convenience script.
 ##
