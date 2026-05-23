@@ -237,28 +237,14 @@ jobs:
           -DCMAKE_CXX_STANDARD=20 \
           -DZ3_BUILD_LIBZ3_SHARED=OFF
 
-    ## ── Build ──────────────────────────────────────────────────────────────
-    - name: Build Z3
+    ## ── Build (CMake path) ────────────────────────────────────────────────
+    - name: Build Z3 (CMake)
+      if: env.USE_CMAKE == 'true'
       run: |
         JOBS=$(nproc 2>/dev/null || echo 4)
         set +e
-        if [ "$USE_CMAKE" = "true" ]; then
-            cmake --build "z3-z3-${{ env.Z3_VERSION }}/build" \
-                --config Release -j"$JOBS" > /tmp/build_out.txt 2>&1
-        else
-            VSDIR=$(vswhere -latest -property installationPath 2>/dev/null | tr -d '\r\n')
-            BUILDDIR=$(cd "z3-z3-${{ env.Z3_VERSION }}/build" && pwd -W)
-            echo "VS installation: ${VSDIR}"
-            echo "Build directory: ${BUILDDIR}"
-            ## Write a batch file to the workspace (no MSYS2 path conversion).
-            ## /tmp is converted by MSYS2 to C:\Users\RUNNER~1\AppData\...,
-            ## which cmd.exe receives unquoted and misparses; a bare relative
-            ## name like build_z3.bat is never converted by MSYS2, so cmd.exe
-            ## inherits the bash working directory and finds it there.
-            printf '@echo off\r\ncall "%s\\VC\\Auxiliary\\Build\\vcvars64.bat" x64\r\nif errorlevel 1 exit /b 1\r\ncd /D "%s"\r\nnmake /nologo z3\r\n' \
-                "${VSDIR}" "${BUILDDIR}" > build_z3.bat
-            cmd /c build_z3.bat > /tmp/build_out.txt 2>&1
-        fi
+        cmake --build "z3-z3-${{ env.Z3_VERSION }}/build" \
+            --config Release -j"$JOBS" > /tmp/build_out.txt 2>&1
         ec=$?
         grep -E "error C[0-9]|error LNK|error MSB|CMake Error|FAILED:" \
             /tmp/build_out.txt | head -15 | while IFS= read -r line; do
@@ -271,6 +257,22 @@ jobs:
             grep -m 20 -i "error" /tmp/build_out.txt || true
         fi
         set -e; exit $ec
+
+    ## ── Build (nmake path) ────────────────────────────────────────────────
+    ## Must use shell: cmd here.  From MSYS2 bash, "cmd /c ..." silently
+    ## drops the /c flag (MSYS2 converts /c to the drive letter C:), so
+    ## cmd.exe starts in interactive mode and exits 0 without building
+    ## anything.  shell: cmd bypasses MSYS2 entirely.
+    - name: Build Z3 (nmake)
+      if: env.USE_CMAKE != 'true'
+      shell: cmd
+      working-directory: z3-z3-${{ env.Z3_VERSION }}/build
+      run: |
+        for /f "tokens=* usebackq" %%i in (`vswhere -latest -property installationPath`) do set "VSDIR=%%i"
+        if "%VSDIR%"=="" ( echo ERROR: vswhere found no VS installation & exit /b 1 )
+        call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" x64
+        if errorlevel 1 ( echo ERROR: vcvars64.bat failed & exit /b 1 )
+        nmake /nologo z3
 
     ## ── Verify ─────────────────────────────────────────────────────────────
     - name: Verify binary
