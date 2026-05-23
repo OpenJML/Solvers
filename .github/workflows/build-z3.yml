@@ -1,18 +1,19 @@
 name: Build Z3 Solver
 run-name: "Build Z3 ${{ inputs.z3_version }}"
 
-## Builds Z3 from source for multiple platforms and publishes each binary
+## Builds Z3 from source for Linux and macOS and publishes each binary
 ## as a GitHub release asset.  Z3 version is parameterised.
 ##
 ## Trigger manually via the GitHub UI or:
 ##   gh workflow run build-z3.yml --repo OpenJML/Solvers --ref build --field z3_version=<version>
 ## The build-z3 convenience script wraps this call.
+## For Windows binaries use build-win.yml / build-win convenience script.
 ##
 ## Matrix:
 ##   ubuntu-arm64   — ubuntu-24.04-arm runner, ubuntu:24.04 container (GCC 13)
 ##   ubuntu-x86_64  — ubuntu-24.04     runner, ubuntu:24.04 container (GCC 13)
-##   macos-arm64    — macos-14 runner, native Apple Clang (ARM64)
-##   macos-x86_64   — macos-14 runner, native Apple Clang via arch -x86_64 (Rosetta)
+##   macos-arm64    — macos-15 runner, native Apple Clang (ARM64)
+##   macos-x86_64   — macos-15 runner, native Apple Clang via arch -x86_64 (Rosetta)
 ##
 ## ubuntu:24.04 (GCC 13) is used for all Linux jobs.  GCC 13 provides the
 ## C++20 <format> and <span> headers required by z3 >= ~4.12.  Older z3
@@ -80,24 +81,20 @@ jobs:
             label:     ubuntu-24.04-x86_64
             container: ubuntu:24.04
             arch_cmd:  ''
-          - runner:    macos-14
-            label:     macos-14-arm64
+          - runner:    macos-15
+            label:     macos-15-arm64
             container: ''
             arch_cmd:  ''
-          - runner:    macos-14
-            label:     macos-14-x86_64
+          - runner:    macos-15
+            label:     macos-15-x86_64
             container: ''
             arch_cmd:  'arch -x86_64'
-          - runner:    windows-latest
-            label:     windows
-            container: ''
-            arch_cmd:  ''
 
     runs-on: ${{ matrix.runner }}
 
     ## The container field runs all steps inside the named Docker image rather
-    ## than directly on the runner.  For Linux jobs, ubuntu:20.04 provides GCC 9
-    ## (Z3 4.3.x's C++ code has violations that GCC 10+ rejects as errors).
+    ## than directly on the runner.  For Linux jobs, ubuntu:24.04 provides GCC 13
+    ## which supports the C++20 <format> and <span> headers required by newer z3.
     ## The runner supplies the CPU architecture and Docker engine; the container
     ## supplies the compiler and libraries.  The resulting binary targets the
     ## container's architecture natively — no cross-compilation or emulation.
@@ -110,7 +107,6 @@ jobs:
       Z3_VERSION: ${{ needs.prepare.outputs.z3_version }}
       OS_LABEL:   ${{ matrix.label }}
 
-    ## Use bash on all platforms (Git Bash on Windows).
     defaults:
       run:
         shell: bash
@@ -138,13 +134,6 @@ jobs:
         apt-get update -qq
         apt-get install -y gh
 
-    - name: Install build dependencies (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        ## MSVC (cl.exe, nmake) is pre-installed with Visual Studio on windows-latest.
-        ## Python is needed to run mk_make.py; setuptools/2to3 for old z3 Python scripts.
-        pip3 install setuptools 2to3 || true
-
     - name: Install build dependencies (macOS)
       if: runner.os == 'macOS'
       run: |
@@ -171,9 +160,10 @@ jobs:
         cd "z3-z3-${{ env.Z3_VERSION }}"
 
         ## 0. Strip Windows SAL annotation macros (__in, __out, __inout).
-        ##    On Linux these expand to empty and conflict with GCC 9 STL variable
-        ##    names (stl_algo.h uses __in as a loop variable).  Removing them is
-        ##    semantically neutral since they always expand to nothing.
+        ##    On Linux these expand to empty but conflict with GCC STL variable
+        ##    names (stl_algo.h uses __in as a loop variable).  On macOS they
+        ##    also expand to nothing and are harmless to remove.  Semantically
+        ##    neutral since they always expand to nothing on non-MSVC compilers.
         python3 -c "
         import os, pathlib, re
         count = 0
@@ -240,7 +230,7 @@ jobs:
 
         ## 1. Convert Python 2 syntax; fix tab/space mixing.
         ## Run 2to3 only if it can parse scripts/mk_make.py (i.e., it is Python 2).
-        ## z3 ≥ 4.8 already uses Python 3 syntax (f-strings etc.) that 2to3's
+        ## z3 >= 4.8 already uses Python 3 syntax (f-strings etc.) that 2to3's
         ## Python-2 parser cannot read.  If we let 2to3 run and fail mid-way it
         ## leaves partially-converted files that cause SyntaxErrors downstream.
         ## Using mk_make.py as a canary avoids that: if 2to3 exits 1 on it the
@@ -253,7 +243,7 @@ jobs:
             done
         fi
 
-        ## 2. Skip non-Linux Makefile targets from mk_make.py.
+        ## 2. Skip Makefile targets that are incompatible with Linux/macOS builds.
         python3 -c "
         import pathlib
         p = pathlib.Path('scripts/mk_make.py')
@@ -265,8 +255,6 @@ jobs:
             )
         p.write_text(t)
         "
-
-        ## 2b. (Windows uses MSVC/nmake — no MinGW-specific patches needed)
 
         ## 3. Fix sorted(cnames, cmp=...) missed by 2to3.
         python3 -c "
@@ -397,8 +385,8 @@ jobs:
         print(f'Re-encoded {n} file(s) as UTF-8')
         "
 
-        ## 7. Generate scripts/config-release.mk (Linux and macOS only).
-        ##    Windows uses MSVC which auto-detects its own config via mk_make.py.
+        ## 7. Generate scripts/config-release.mk.
+        ##    mk_make.py uses this file to set compiler flags instead of auto-detecting.
         ARCH_CMD="${{ matrix.arch_cmd }}"
         case "$(uname -s)" in
         Darwin)
@@ -412,10 +400,6 @@ jobs:
               'SO_EXT=.dylib' 'SLINK=clang++' 'SLINK_FLAGS=-dynamiclib' \
               'SLINK_EXTRA_FLAGS=' 'SLINK_OUT_FLAG=-o' \
               > scripts/config-release.mk ;;
-        MINGW*|MSYS*|CYGWIN*)
-            ## Windows uses MSVC — no config-release.mk needed; mk_make.py auto-configures
-            echo "Windows: skipping config-release.mk (MSVC auto-detects)"
-            ;;
         *)
             printf '%s\n' \
               'CC=gcc' 'PREFIX=/usr/local' 'CXX=g++' \
@@ -432,7 +416,7 @@ jobs:
             ## injected by mk_make.py into the generated files to c++2a.
         esac
         echo "config-release.mk generated"
-        cat scripts/config-release.mk 2>/dev/null || echo "(none — MSVC auto-configures)"
+        cat scripts/config-release.mk
 
         ## 8. Detect whether the source requires C++20 <span> (not in GCC 9
         ##    libstdc++).  If so, use CMake; otherwise use the Python mk_make.py
@@ -450,8 +434,7 @@ jobs:
       if: env.USE_CMAKE != 'true'
       run: |
         cd "z3-z3-${{ env.Z3_VERSION }}"
-        ## Windows: mk_make.py detects MSVC and generates an nmake Makefile — correct.
-        ## Linux/macOS: mk_make.py generates a GNU Makefile using config-release.mk.
+        ## mk_make.py generates a GNU Makefile using config-release.mk.
         set +e
         python3 -W ignore::SyntaxWarning scripts/mk_make.py > /tmp/mk_out.txt 2>&1
         ec=$?
@@ -460,16 +443,10 @@ jobs:
             echo "::error file=scripts/mk_make.py::$line"
         done
         set -e
-        ## Remove x86-only SIMD flags that Z3 4.3.x mk_util.py injects into
-        ## the generated build files for Linux regardless of CPU architecture.
-        ## On ARM64 these flags cause a hard compiler error.
-        ## Use Python (not sed) for reliable regex replacement across all
-        ## generated .mk / Makefile files in the build directory.
-        ## Patch C++ standard in generated Makefile files (Linux/macOS GCC only).
-        ## Windows uses MSVC nmake Makefiles which use /std:c++20 syntax — skip.
+        ## Patch C++ standard in generated Makefile files.
         ## mk_make.py may hard-code -std=c++17 regardless of config-release.mk.
-        ## GCC 9 (ubuntu:24.04 replaced it, but kept for safety) uses -std=c++2a.
-        if [ $ec -eq 0 ] && case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) false;; *) true;; esac; then
+        ## Also strip -DZ3DEBUG to prevent debug-only broken code from compiling.
+        if [ $ec -eq 0 ]; then
             if g++ --version 2>&1 | grep -q "^g++ .* 9\."; then
                 CXX_STD="c++2a"
             else
@@ -490,6 +467,7 @@ jobs:
                     print('Patched C++ standard to', target, 'in', p.name)
             "
         fi
+        ## Remove x86-only SIMD flags on ARM64 — these cause a hard compiler error.
         if [ $ec -eq 0 ] && [ "$(uname -m)" = "aarch64" ]; then
             python3 -c "
         import pathlib, re
@@ -513,17 +491,10 @@ jobs:
       if: env.USE_CMAKE == 'true'
       run: |
         cd "z3-z3-${{ env.Z3_VERSION }}"
-        ## Common cmake flags for all platforms.
         CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=20 -DZ3_BUILD_LIBZ3_SHARED=OFF"
         case "$(uname -s)" in
-        MINGW*|MSYS*|CYGWIN*)
-            ## Force MinGW64 g++ and Unix Makefile generator (avoids MSVC detection).
-            cmake -B build -G "Unix Makefiles" $CMAKE_ARGS \
-                -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
-                -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc -Wl,-Bstatic -lpthread -Wl,-Bdynamic"
-            ;;
         Darwin)
-            ## cmake itself is an ARM64 binary on macos-14; running it via
+            ## cmake itself is an ARM64 binary on macos-15; running it via
             ## arch -x86_64 would fail.  Instead pass the target architecture
             ## as a cmake flag so the compiler produces x86_64 output.
             ARCH_EXTRA=""
@@ -542,20 +513,10 @@ jobs:
         JOBS=$(nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
         set +e
         if [ "$USE_CMAKE" = "true" ]; then
-            ## Build all targets; cmake determines which includes the z3 binary.
             cmake --build "z3-z3-${{ env.Z3_VERSION }}/build" \
                 -j"$JOBS" > /tmp/build_out.txt 2>&1
         else
-            case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
-                ## Windows: MSVC/nmake — find vcvars64.bat and build in one cmd call.
-                VSDIR=$(cmd /c "vswhere -latest -property installationPath" 2>/dev/null | tr -d '\r\n')
-                BUILDDIR=$(cd "z3-z3-${{ env.Z3_VERSION }}/build" && pwd -W)
-                cmd /c "call \"${VSDIR}\\VC\\Auxiliary\\Build\\vcvars64.bat\" x64 > nul 2>&1 && cd /D \"${BUILDDIR}\" && nmake /nologo z3" > /tmp/build_out.txt 2>&1
-                ;;
-            *)
-                $ARCH_CMD make -j"$JOBS" -C "z3-z3-${{ env.Z3_VERSION }}/build" z3 > /tmp/build_out.txt 2>&1
-                ;;
-            esac
+            $ARCH_CMD make -j"$JOBS" -C "z3-z3-${{ env.Z3_VERSION }}/build" z3 > /tmp/build_out.txt 2>&1
         fi
         ec=$?
         grep -E "undefined reference|error:|ld returned|ld: error|CMake Error|FAILED:|Error 1$|Error 2$" \
@@ -574,8 +535,6 @@ jobs:
     - name: Verify binary
       run: |
         binary="z3-z3-${{ env.Z3_VERSION }}/build/z3"
-        ## Windows binary has .exe extension.
-        [ -f "${binary}.exe" ] && binary="${binary}.exe"
         ## For macOS x86_64 (Rosetta build) prepend arch -x86_64 when running.
         ARCH_CMD="${{ matrix.arch_cmd }}"
 
@@ -623,9 +582,7 @@ jobs:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         asset="${{ steps.meta.outputs.asset_name }}"
-        src="z3-z3-${{ env.Z3_VERSION }}/build/z3"
-        [ -f "${src}.exe" ] && src="${src}.exe"
-        cp "$src" "$asset"
+        cp "z3-z3-${{ env.Z3_VERSION }}/build/z3" "$asset"
         gh release upload "${{ needs.prepare.outputs.tag }}" \
           --repo "${{ github.repository }}" \
           "${asset}#${asset}"

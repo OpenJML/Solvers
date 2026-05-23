@@ -1,0 +1,323 @@
+name: Build Z3 Solver (Windows)
+run-name: "Build Z3 ${{ inputs.z3_version }} (windows)"
+
+## Builds Z3 from source for Windows (MSVC/nmake or CMake) and publishes
+## the binary as a GitHub release asset.  Z3 version is parameterised.
+##
+## Trigger manually via the GitHub UI or:
+##   gh workflow run build-win.yml --repo OpenJML/Solvers --ref build --field z3_version=<version>
+## The build-win convenience script wraps this call.
+## For Linux and macOS binaries use build-z3.yml.
+##
+## Older z3 (detected by absence of #include <span>) uses mk_make.py, which
+## auto-detects MSVC and generates an nmake Makefile.  Newer z3 uses CMake.
+
+on:
+  workflow_dispatch:
+    inputs:
+      z3_version:
+        description: 'Z3 version tag to build (e.g. 4.8.12, 4.16.0)'
+        required: true
+
+jobs:
+
+  ## ── Create the GitHub release ─────────────────────────────────────────────
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag:       ${{ steps.rel.outputs.tag }}
+      title:     ${{ steps.rel.outputs.title }}
+      z3_version: ${{ steps.rel.outputs.z3_version }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+    - name: Create release
+      id: rel
+      run: |
+        ver="${{ inputs.z3_version }}"
+        ts=$(date -u +%Y%m%d-%H%M%S)
+        tag="z3-${ver}-windows-${ts}"
+        title="Z3 ${ver} (windows) — $(date -u '+%Y-%m-%d %H:%M UTC')"
+        echo "z3_version=$ver" >> "$GITHUB_OUTPUT"
+        echo "tag=$tag"        >> "$GITHUB_OUTPUT"
+        echo "title=$title"    >> "$GITHUB_OUTPUT"
+        gh release create "$tag" \
+          --repo "${{ github.repository }}" \
+          --title "$title" \
+          --draft \
+          --notes "Z3 ${ver} Windows binary. Built from https://github.com/Z3Prover/z3/releases/tag/z3-${ver}."
+
+  ## ── Build ─────────────────────────────────────────────────────────────────
+  build-z3:
+    needs: prepare
+    runs-on: windows-latest
+
+    env:
+      Z3_VERSION: ${{ needs.prepare.outputs.z3_version }}
+      OS_LABEL:   windows
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    ## ── Metadata ───────────────────────────────────────────────────────────
+    - name: Set build metadata
+      id: meta
+      run: |
+        echo "asset_name=z3-${{ env.Z3_VERSION }}-windows" >> "$GITHUB_OUTPUT"
+
+    ## ── Dependencies ───────────────────────────────────────────────────────
+    - name: Install build dependencies
+      run: |
+        ## MSVC (cl.exe, nmake) is pre-installed with Visual Studio on windows-latest.
+        ## Python is needed to run mk_make.py; setuptools/2to3 for old z3 Python scripts.
+        pip3 install setuptools 2to3 || true
+
+    ## ── Source ─────────────────────────────────────────────────────────────
+    - name: Download Z3 source
+      run: |
+        curl -fsSL "https://github.com/Z3Prover/z3/archive/refs/tags/z3-${{ env.Z3_VERSION }}.tar.gz" \
+             | tar xz
+        echo "Source directory: $(ls -d z3-z3-*/)"
+
+    ## ── Patch ──────────────────────────────────────────────────────────────
+    - name: Patch Z3 source for Python 3 and MSVC compatibility
+      run: |
+        cd "z3-z3-${{ env.Z3_VERSION }}"
+
+        ## 1a. Replace distutils.sysconfig (removed in Python 3.12) with sysconfig.
+        ##     Uses regex so it matches get_python_lib(...) with any arguments —
+        ##     Z3 4.8.x calls get_python_lib(prefix=getenv("PREFIX", None))
+        ##     which the simple string-replace approach misses.
+        python3 -c "
+        import pathlib, re
+        p = pathlib.Path('scripts/mk_util.py')
+        t = p.read_text(errors='replace')
+        t = t.replace('import distutils.sysconfig',
+                      'import sysconfig as _sysconfig_mod')
+        t = re.sub(r'distutils\.sysconfig\.get_python_lib\((?:[^()]*|\([^()]*\))*\)',
+                   '_sysconfig_mod.get_path(\"purelib\")', t)
+        t = re.sub(r'distutils\.sysconfig\.get_python_version\(\)',
+                   '_sysconfig_mod.get_python_version()', t)
+        p.write_text(t)
+        print('Patched distutils.sysconfig in mk_util.py')
+        "
+
+        ## 1. Convert Python 2 syntax; fix tab/space mixing.
+        ## Run 2to3 only if it can parse scripts/mk_make.py (i.e., it is Python 2).
+        ## z3 >= 4.8 already uses Python 3 syntax (f-strings etc.) that 2to3's
+        ## Python-2 parser cannot read.  Using mk_make.py as a canary avoids
+        ## leaving partially-converted files that cause SyntaxErrors downstream.
+        if 2to3 scripts/mk_make.py > /dev/null 2>&1; then
+            2to3 -w scripts/ src/api/python/ > /dev/null 2>&1 || true
+            find scripts/ src/api/python/ -name '*.bak' -delete 2>/dev/null || true
+            for f in scripts/*.py src/api/python/*.py; do
+                [ -f "$f" ] && { expand -t 8 "$f" > /tmp/pf && mv /tmp/pf "$f"; } || true
+            done
+        fi
+
+        ## 2. Skip Makefile targets that are incompatible with this build.
+        ##    check_eol() checks for Unix line endings and fails on Windows paths.
+        ##    mk_vs_proj() generates Visual Studio project files we don't need.
+        python3 -c "
+        import pathlib
+        p = pathlib.Path('scripts/mk_make.py')
+        t = p.read_text()
+        for skip in ['check_eol()', 'mk_vs_proj(']:
+            t = '\n'.join(
+                ('# ' + l if l.strip().startswith(skip.split('(')[0]) else l)
+                for l in t.splitlines()
+            )
+        p.write_text(t)
+        "
+
+        ## 3. Fix sorted(cnames, cmp=...) missed by 2to3.
+        python3 -c "
+        import pathlib
+        p = pathlib.Path('scripts/mk_util.py')
+        t = p.read_text()
+        t = t.replace(
+            'return sorted(cnames, cmp=comp_components)',
+            'import functools; return sorted(cnames, key=functools.cmp_to_key(comp_components))'
+        )
+        p.write_text(t)
+        "
+
+        ## 5b. Fix template-body bugs in z3 4.8.x LP math headers.
+        ##     static_matrix.h:83 calls .get() which doesn't exist; should be .get_elem().
+        ##     tail_matrix.h: ref_row::operator[] calls m_A.get_elem() but tail_matrix has
+        ##     no get_elem without Z3DEBUG. Replace with return T(); using a block comment
+        ##     so the closing } on the same source line is not accidentally commented out.
+        python3 -c "
+        import pathlib
+        p = pathlib.Path('src/math/lp/static_matrix.h')
+        if p.exists():
+            t = p.read_text(errors='replace')
+            new_t = t.replace('v.m_matrix.get(v.m_row, v.m_col)',
+                              'v.m_matrix.get_elem(v.m_row, v.m_col)')
+            if new_t != t:
+                p.write_text(new_t)
+                print('Fixed static_matrix.h .get() -> .get_elem()')
+        p = pathlib.Path('src/math/lp/tail_matrix.h')
+        if p.exists():
+            t = p.read_text(errors='replace')
+            new_t = t.replace('return m_A.get_elem(m_row, j);',
+                              'return T(); /* stub: get_elem not declared on tail_matrix */')
+            if new_t != t:
+                p.write_text(new_t)
+                print('Fixed tail_matrix.h broken get_elem debug call')
+        "
+
+        ## 5c. Fix m_low_bound typo in z3 4.8.x column_info.h.
+        ##     The member is m_lower_bound; MSVC rejects the wrong name in a template body.
+        python3 -c "
+        import pathlib
+        p = pathlib.Path('src/math/lp/column_info.h')
+        if p.exists():
+            t = p.read_text(errors='replace')
+            new_t = t.replace('c.m_low_bound', 'c.m_lower_bound')
+            if new_t != t:
+                p.write_text(new_t)
+                print('Fixed m_low_bound typo in column_info.h')
+        "
+
+        ## 6. Re-encode any Latin-1 bytes in C++ source files to UTF-8.
+        python3 -c "
+        import os, pathlib
+        n = 0
+        for root, dirs, files in os.walk('.'):
+            for fname in files:
+                if fname.endswith(('.h', '.cpp', '.cc', '.c')):
+                    p = pathlib.Path(root, fname)
+                    try:
+                        p.read_text()
+                    except UnicodeDecodeError:
+                        p.write_text(p.read_text(encoding='latin-1'))
+                        n += 1
+        print(f'Re-encoded {n} file(s) as UTF-8')
+        "
+
+        ## 8. Detect whether the source requires C++20 <span>.
+        ##    If so, use CMake; otherwise use the Python mk_make.py build system.
+        if grep -rq '#include[[:space:]]*<span>' src/ 2>/dev/null; then
+            echo "USE_CMAKE=true"  >> "$GITHUB_ENV"
+            echo "Source uses <span> — will build with CMake"
+        else
+            echo "USE_CMAKE=false" >> "$GITHUB_ENV"
+            echo "Source does not use <span> — will build with mk_make.py"
+        fi
+
+    ## ── Generate Makefile (mk_make.py path) ──────────────────────────────
+    - name: Generate Z3 Makefile
+      if: env.USE_CMAKE != 'true'
+      run: |
+        cd "z3-z3-${{ env.Z3_VERSION }}"
+        ## mk_make.py auto-detects MSVC and generates an nmake Makefile.
+        set +e
+        python3 -W ignore::SyntaxWarning scripts/mk_make.py > /tmp/mk_out.txt 2>&1
+        ec=$?
+        { grep -E "MKException|Failed to find|Error:|Traceback|raise " /tmp/mk_out.txt 2>/dev/null || true; \
+          tail -5 /tmp/mk_out.txt; } | sort -u | while IFS= read -r line; do
+            echo "::error file=scripts/mk_make.py::$line"
+        done
+        exit $ec
+
+    ## ── Configure with CMake (newer z3 that uses <span>) ────────────────────
+    - name: Configure Z3 with CMake
+      if: env.USE_CMAKE == 'true'
+      run: |
+        cd "z3-z3-${{ env.Z3_VERSION }}"
+        ## cmake on windows-latest auto-detects the MSVC generator.
+        cmake -B build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_CXX_STANDARD=20 \
+          -DZ3_BUILD_LIBZ3_SHARED=OFF
+
+    ## ── Build ──────────────────────────────────────────────────────────────
+    - name: Build Z3
+      run: |
+        JOBS=$(nproc 2>/dev/null || echo 4)
+        set +e
+        if [ "$USE_CMAKE" = "true" ]; then
+            cmake --build "z3-z3-${{ env.Z3_VERSION }}/build" \
+                --config Release -j"$JOBS" > /tmp/build_out.txt 2>&1
+        else
+            VSDIR=$(cmd /c "vswhere -latest -property installationPath" 2>/dev/null | tr -d '\r\n')
+            BUILDDIR=$(cd "z3-z3-${{ env.Z3_VERSION }}/build" && pwd -W)
+            cmd /c "call \"${VSDIR}\\VC\\Auxiliary\\Build\\vcvars64.bat\" x64 > nul 2>&1 && cd /D \"${BUILDDIR}\" && nmake /nologo z3" > /tmp/build_out.txt 2>&1
+        fi
+        ec=$?
+        grep -E "error C[0-9]|error LNK|error MSB|CMake Error|FAILED:" \
+            /tmp/build_out.txt | head -15 | while IFS= read -r line; do
+            echo "::error::$line"
+        done
+        if [ $ec -ne 0 ]; then
+            echo "=== build output: first errors ==="
+            grep -m 20 -i "error" /tmp/build_out.txt || true
+            echo "=== build output: last 30 lines ==="
+            tail -30 /tmp/build_out.txt
+        fi
+        set -e; exit $ec
+
+    ## ── Verify ─────────────────────────────────────────────────────────────
+    - name: Verify binary
+      run: |
+        ## cmake --config Release places the binary in build/Release/ on Windows.
+        binary="z3-z3-${{ env.Z3_VERSION }}/build/z3.exe"
+        [ -f "$binary" ] || binary="z3-z3-${{ env.Z3_VERSION }}/build/Release/z3.exe"
+
+        echo "=== file type / size ==="
+        file "$binary" || true
+        ls -lh "$binary"
+
+        echo "=== z3 version ==="
+        "$binary" -version || echo "(z3 -version exited non-zero — continuing)"
+
+        echo "=== smoke test: (check-sat) via temp file ==="
+        tmp=$(mktemp /tmp/z3_smoke_XXXXXX.smt2)
+        printf '(check-sat)\n(exit)\n' > "$tmp"
+        smoke_out=$("$binary" -smt2 "$tmp" 2>&1)
+        ec=$?
+        rm -f "$tmp"
+        echo "$smoke_out"
+        if [ $ec -ne 0 ] && ! echo "$smoke_out" | grep -q "^sat"; then
+            echo "FAIL: z3 exited $ec and did not produce 'sat'"
+            exit 1
+        fi
+        if echo "$smoke_out" | grep -q "^ERROR"; then
+            echo "FAIL: z3 reported errors"
+            exit 1
+        fi
+        if ! echo "$smoke_out" | grep -q "^sat"; then
+            echo "FAIL: expected 'sat' in output, got: $smoke_out"
+            exit 1
+        fi
+        echo "Smoke test passed"
+
+    ## ── Publish ────────────────────────────────────────────────────────────
+    - name: Upload asset to release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        asset="${{ steps.meta.outputs.asset_name }}"
+        binary="z3-z3-${{ env.Z3_VERSION }}/build/z3.exe"
+        [ -f "$binary" ] || binary="z3-z3-${{ env.Z3_VERSION }}/build/Release/z3.exe"
+        cp "$binary" "${asset}.exe"
+        gh release upload "${{ needs.prepare.outputs.tag }}" \
+          --repo "${{ github.repository }}" \
+          "${asset}.exe#${asset}.exe"
+
+  ## ── Publish draft once build succeeds ────────────────────────────────────
+  finalize:
+    needs: [ prepare, build-z3 ]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+    - name: Publish release
+      run: |
+        gh release edit "${{ needs.prepare.outputs.tag }}" \
+          --repo "${{ github.repository }}" \
+          --draft=false
+        echo "Published: ${{ needs.prepare.outputs.tag }}"
