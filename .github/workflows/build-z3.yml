@@ -141,10 +141,8 @@ jobs:
     - name: Install build dependencies (Windows)
       if: runner.os == 'Windows'
       run: |
-        ## MSYS2 is pre-installed on windows-latest; add MinGW64 to PATH
-        ## to get g++, make, ar, and standard Unix tools.
-        echo "C:/msys64/mingw64/bin" >> "$GITHUB_PATH"
-        echo "C:/msys64/usr/bin"     >> "$GITHUB_PATH"
+        ## MSVC (cl.exe, nmake) is pre-installed with Visual Studio on windows-latest.
+        ## Python is needed to run mk_make.py; setuptools/2to3 for old z3 Python scripts.
         pip3 install setuptools 2to3 || true
 
     - name: Install build dependencies (macOS)
@@ -268,23 +266,7 @@ jobs:
         p.write_text(t)
         "
 
-        ## 2b. Windows: patch mk_util.py ar check to use ar.exe.
-        ##     z3 4.3.2 hardcodes which('ar') — MinGW64 has ar.exe not ar,
-        ##     so we change the check to look for ar.exe directly.
-        case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
-            python3 -c "
-        import pathlib
-        p = pathlib.Path('scripts/mk_util.py')
-        if p.exists():
-            t = p.read_text(errors='replace')
-            new_t = (t.replace(\"which('ar')== None\", \"which('ar.exe') is None\")
-                      .replace(\"which('ar') == None\", \"which('ar.exe') is None\")
-                      .replace(\"which('ar') is None\", \"which('ar.exe') is None\"))
-            if new_t != t:
-                p.write_text(new_t)
-                print('Fixed ar check in mk_util.py for Windows')
-            "
-        ;; esac
+        ## 2b. (Windows uses MSVC/nmake — no MinGW-specific patches needed)
 
         ## 3. Fix sorted(cnames, cmp=...) missed by 2to3.
         python3 -c "
@@ -340,22 +322,6 @@ jobs:
         else
             STUB_INC=""
         fi
-
-        ## 4b. Add __MINGW32__ to Windows guards in scoped_timer.cpp.
-        ##     z3 4.3.x guards Windows timer code with defined(_WINDOWS)||defined(_CYGWIN).
-        ##     MinGW64 defines __MINGW32__ but not _WINDOWS, so it falls through to
-        ##     the POSIX timer path which MinGW64 doesn't support.
-        python3 -c "
-        import pathlib
-        p = pathlib.Path('src/util/scoped_timer.cpp')
-        if p.exists():
-            t = p.read_text(errors='replace')
-            new_t = t.replace('defined(_WINDOWS) || defined(_CYGWIN)',
-                              'defined(_WINDOWS) || defined(_CYGWIN) || defined(__MINGW32__)')
-            if new_t != t:
-                p.write_text(new_t)
-                print('Patched scoped_timer.cpp Windows guards for MinGW64')
-        "
 
         ## 5. Linux: cast UINT64_MAX to resolve overload ambiguity.
         ##    On Linux (both x86_64 and arm64), UINT64_MAX is 'unsigned long'
@@ -429,10 +395,8 @@ jobs:
         print(f'Re-encoded {n} file(s) as UTF-8')
         "
 
-        ## 7. Generate scripts/config-release.mk with platform-specific values.
-        ##    Linux:   GCC, static C++ runtime, -lrt for POSIX timers.
-        ##    macOS:   Apple Clang, dynamic libs (macOS C++ runtime is part of OS).
-        ##    Windows: MinGW64 g++, static C++ runtime, .exe/.dll, no -lrt.
+        ## 7. Generate scripts/config-release.mk (Linux and macOS only).
+        ##    Windows uses MSVC which auto-detects its own config via mk_make.py.
         ARCH_CMD="${{ matrix.arch_cmd }}"
         case "$(uname -s)" in
         Darwin)
@@ -447,16 +411,9 @@ jobs:
               'SLINK_EXTRA_FLAGS=' 'SLINK_OUT_FLAG=-o' \
               > scripts/config-release.mk ;;
         MINGW*|MSYS*|CYGWIN*)
-            printf '%s\n' \
-              'CC=gcc' 'PREFIX=C:/z3' 'CXX=g++' \
-              "CXXFLAGS= -c -O3 -std=c++20 -D _EXTERNAL_RELEASE -D_NO_OMP_ -D_MP_INTERNAL -D_WINDOWS ${STUB_INC} -fomit-frame-pointer" \
-              'CXX_OUT_FLAG=-o' 'OBJ_EXT=.o' 'LIB_EXT=.a' \
-              'AR=ar' 'AR_FLAGS=rcs' 'AR_OUTFLAG=' 'EXE_EXT=.exe' \
-              'LINK=g++' 'LINK_FLAGS=-static-libstdc++ -static-libgcc' \
-              'LINK_OUT_FLAG=-o' 'LINK_EXTRA_FLAGS=-Wl,-Bstatic -lpthread -Wl,-Bdynamic' \
-              'SO_EXT=.dll' 'SLINK=g++' 'SLINK_FLAGS=-shared' \
-              'SLINK_EXTRA_FLAGS=' 'SLINK_OUT_FLAG=-o' \
-              > scripts/config-release.mk ;;
+            ## Windows uses MSVC — no config-release.mk needed; mk_make.py auto-configures
+            echo "Windows: skipping config-release.mk (MSVC auto-detects)"
+            ;;
         *)
             printf '%s\n' \
               'CC=gcc' 'PREFIX=/usr/local' 'CXX=g++' \
@@ -491,34 +448,10 @@ jobs:
       if: env.USE_CMAKE != 'true'
       run: |
         cd "z3-z3-${{ env.Z3_VERSION }}"
-        ## On Windows, mk_make.py may detect MSVC and generate an nmake Makefile.
-        ## Force MinGW64 g++ by setting CXX/CC env vars (works for all z3 versions)
-        ## and also --compiler=g++ for older z3 that supports that flag.
-        ## Newer z3 (4.16+) dropped --compiler; detect support via --help.
-        EXTRA_MK_ARGS=""
-        case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
-            export CXX=g++ CC=gcc
-            python3 scripts/mk_make.py --help 2>&1 | grep -q -- "--compiler" \
-                && EXTRA_MK_ARGS="--compiler=g++"
-            ;; esac
+        ## Windows: mk_make.py detects MSVC and generates an nmake Makefile — correct.
+        ## Linux/macOS: mk_make.py generates a GNU Makefile using config-release.mk.
         set +e
-        case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
-            ## sitecustomize.py via PYTHONPATH fails on Windows because Windows Python
-            ## ignores Unix paths.  Instead, patch platform.system() inline and run
-            ## mk_make.py via runpy in the same session — platform is already patched
-            ## in sys.modules so any 'import platform' in mk_make.py gets our version.
-            ## z3's mk_util.py sets IS_WINDOWS based solely on os.name=='nt'.
-            ## Setting os.name='linux' makes IS_WINDOWS=False so mk_make.py
-            ## generates a GNU Makefile. Using 'linux' (not 'posix') avoids
-            ## shutil trying to import the posix module which doesn't exist on Windows.
-            ## z3's which() uses os.path.isfile() and never appends .exe, so
-            ## MinGW64's ar.exe isn't found by which('ar'). Set AR=ar.exe explicitly.
-            python3 -W ignore::SyntaxWarning -c "import os, runpy, sys; os.name = 'linux'; os.environ.setdefault('AR', 'ar.exe'); os.uname = lambda: ('Linux', 'host', '5.15', '', 'x86_64'); sys.path.insert(0, 'scripts'); sys.argv = ['scripts/mk_make.py'] + '$EXTRA_MK_ARGS'.split(); runpy.run_path('scripts/mk_make.py', run_name='__main__')" > /tmp/mk_out.txt 2>&1
-            ;;
-        *)
-            python3 -W ignore::SyntaxWarning scripts/mk_make.py $EXTRA_MK_ARGS > /tmp/mk_out.txt 2>&1
-            ;;
-        esac
+        python3 -W ignore::SyntaxWarning scripts/mk_make.py > /tmp/mk_out.txt 2>&1
         ec=$?
         { grep -E "MKException|Failed to find|Error:|Traceback|raise " /tmp/mk_out.txt 2>/dev/null || true; \
           tail -5 /tmp/mk_out.txt; } | sort -u | while IFS= read -r line; do
@@ -530,10 +463,11 @@ jobs:
         ## On ARM64 these flags cause a hard compiler error.
         ## Use Python (not sed) for reliable regex replacement across all
         ## generated .mk / Makefile files in the build directory.
-        ## Patch C++ standard in generated Makefile files.
+        ## Patch C++ standard in generated Makefile files (Linux/macOS GCC only).
+        ## Windows uses MSVC nmake Makefiles which use /std:c++20 syntax — skip.
         ## mk_make.py may hard-code -std=c++17 regardless of config-release.mk.
-        ## GCC 9 (ubuntu:20.04) uses -std=c++2a (= c++20 draft); all others c++20.
-        if [ $ec -eq 0 ]; then
+        ## GCC 9 (ubuntu:24.04 replaced it, but kept for safety) uses -std=c++2a.
+        if [ $ec -eq 0 ] && [ "$(uname -s)" != "MINGW64_NT"* ] && case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) false;; *) true;; esac; then
             if g++ --version 2>&1 | grep -q "^g++ .* 9\."; then
                 CXX_STD="c++2a"
             else
@@ -607,11 +541,19 @@ jobs:
         set +e
         if [ "$USE_CMAKE" = "true" ]; then
             ## Build all targets; cmake determines which includes the z3 binary.
-            ## (--target z3 omitted: target name may differ across cmake versions.)
             cmake --build "z3-z3-${{ env.Z3_VERSION }}/build" \
                 -j"$JOBS" > /tmp/build_out.txt 2>&1
         else
-            $ARCH_CMD make -j"$JOBS" -C "z3-z3-${{ env.Z3_VERSION }}/build" z3 > /tmp/build_out.txt 2>&1
+            case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
+                ## Windows: MSVC/nmake — find vcvars64.bat and build in one cmd call.
+                VSDIR=$(cmd /c "vswhere -latest -property installationPath" 2>/dev/null | tr -d '\r\n')
+                BUILDDIR=$(cd "z3-z3-${{ env.Z3_VERSION }}/build" && pwd -W)
+                cmd /c "call \"${VSDIR}\\VC\\Auxiliary\\Build\\vcvars64.bat\" x64 > nul 2>&1 && cd /D \"${BUILDDIR}\" && nmake /nologo z3" > /tmp/build_out.txt 2>&1
+                ;;
+            *)
+                $ARCH_CMD make -j"$JOBS" -C "z3-z3-${{ env.Z3_VERSION }}/build" z3 > /tmp/build_out.txt 2>&1
+                ;;
+            esac
         fi
         ec=$?
         grep -E "undefined reference|error:|ld returned|ld: error|CMake Error|FAILED:|Error 1$|Error 2$" \
