@@ -22,7 +22,7 @@ fi
 RES=0
 for v in "$@" ; do
     printf "Triggering build windows-only for z3 %s ... " "$v"
-    if gh workflow run build-z3-win.yml --repo OpenJML/Solvers --ref build --field z3_version="$v" > /dev/null; then
+    if gh workflow run build-win.yml --repo OpenJML/Solvers --ref build --field z3_version="$v" > /dev/null; then
         echo "OK"
     else
         echo "FAILED" >&2
