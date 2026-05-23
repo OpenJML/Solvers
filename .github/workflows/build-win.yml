@@ -250,12 +250,14 @@ jobs:
             BUILDDIR=$(cd "z3-z3-${{ env.Z3_VERSION }}/build" && pwd -W)
             echo "VS installation: ${VSDIR}"
             echo "Build directory: ${BUILDDIR}"
-            ## Write a batch file to avoid bash/cmd quoting interactions.
-            ## A quoted cmd /c string with nested > redirections and && chains is
-            ## unreliable from Git Bash; a real .bat file is unambiguous.
+            ## Write a batch file to the workspace (no MSYS2 path conversion).
+            ## /tmp is converted by MSYS2 to C:\Users\RUNNER~1\AppData\...,
+            ## which cmd.exe receives unquoted and misparses; a bare relative
+            ## name like build_z3.bat is never converted by MSYS2, so cmd.exe
+            ## inherits the bash working directory and finds it there.
             printf '@echo off\r\ncall "%s\\VC\\Auxiliary\\Build\\vcvars64.bat" x64\r\nif errorlevel 1 exit /b 1\r\ncd /D "%s"\r\nnmake /nologo z3\r\n' \
-                "${VSDIR}" "${BUILDDIR}" > /tmp/build_z3.bat
-            cmd /c /tmp/build_z3.bat > /tmp/build_out.txt 2>&1
+                "${VSDIR}" "${BUILDDIR}" > build_z3.bat
+            cmd /c build_z3.bat > /tmp/build_out.txt 2>&1
         fi
         ec=$?
         grep -E "error C[0-9]|error LNK|error MSB|CMake Error|FAILED:" \
