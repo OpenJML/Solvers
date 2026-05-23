@@ -250,19 +250,11 @@ jobs:
             BUILDDIR=$(cd "z3-z3-${{ env.Z3_VERSION }}/build" && pwd -W)
             echo "VS installation: ${VSDIR}"
             echo "Build directory: ${BUILDDIR}"
-            ## Write a batch file via Python to avoid bash/cmd quoting interactions.
+            ## Write a batch file to avoid bash/cmd quoting interactions.
             ## A quoted cmd /c string with nested > redirections and && chains is
             ## unreliable from Git Bash; a real .bat file is unambiguous.
-            python3 -c "
-import sys, pathlib
-vsdir, builddir = sys.argv[1], sys.argv[2]
-bat  = '@echo off\r\n'
-bat += 'call \"' + vsdir + '\\\\VC\\\\Auxiliary\\\\Build\\\\vcvars64.bat\" x64\r\n'
-bat += 'if errorlevel 1 exit /b 1\r\n'
-bat += 'cd /D \"' + builddir + '\"\r\n'
-bat += 'nmake /nologo z3\r\n'
-pathlib.Path('/tmp/build_z3.bat').write_bytes(bat.encode('utf-8'))
-" "${VSDIR}" "${BUILDDIR}"
+            printf '@echo off\r\ncall "%s\\VC\\Auxiliary\\Build\\vcvars64.bat" x64\r\nif errorlevel 1 exit /b 1\r\ncd /D "%s"\r\nnmake /nologo z3\r\n' \
+                "${VSDIR}" "${BUILDDIR}" > /tmp/build_z3.bat
             cmd /c /tmp/build_z3.bat > /tmp/build_out.txt 2>&1
         fi
         ec=$?
