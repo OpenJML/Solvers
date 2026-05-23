@@ -217,8 +217,11 @@ jobs:
       run: |
         cd "z3-z3-${{ env.Z3_VERSION }}"
         ## mk_make.py auto-detects MSVC and generates an nmake Makefile.
+        ## --x64 forces the x64 platform; without it mk_make.py defaults to x86
+        ## because the MSVC environment variables are not active in this bash step.
+        ## All z3 versions 4.3.2–4.14.x support --x64; it only checks IS_WINDOWS.
         set +e
-        python3 -W ignore::SyntaxWarning scripts/mk_make.py > /tmp/mk_out.txt 2>&1
+        python3 -W ignore::SyntaxWarning scripts/mk_make.py --x64 > /tmp/mk_out.txt 2>&1
         ec=$?
         { grep -E "MKException|Failed to find|Error:|Traceback|raise " /tmp/mk_out.txt 2>/dev/null || true; \
           tail -5 /tmp/mk_out.txt; } | sort -u | while IFS= read -r line; do
