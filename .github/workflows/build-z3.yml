@@ -402,18 +402,20 @@ jobs:
         "
 
         ## 5d. Fix obj_hashtable.h: key_data struct lacks explicit constructors in
-        ##     z3 4.15.x+.  Brace/parenthesised aggregate initialisation of key_data
-        ##     fails on Apple Clang 15 (macos-14) and GCC 13 (ubuntu) alike.
-        ##     Insert explicit constructors before the first getter method, regardless
-        ##     of the exact member-declaration style (= nullptr vs no default, spacing).
+        ##     z3 4.15.x+.  Parenthesised aggregate initialisation (P0960R3) fails
+        ##     on Apple Clang 15 (macos-14); GCC and Apple Clang 16 accept it natively.
+        ##     Guard on 'key_data() = default' (not 'key_data(') to avoid false-positive
+        ##     matches against call sites like key_data(k, v) that appear in the file.
+        ##     Include a 1-arg constructor for key_data(k) used in find/remove calls.
         python3 -c "
         import pathlib, re
         p = pathlib.Path('src/util/obj_hashtable.h')
         if p.exists():
             t = p.read_text(errors='replace')
-            if 'key_data(' not in t:
+            if 'key_data() = default' not in t:
                 ctors = (
                     '        key_data() = default;\n'
+                    '        key_data(Key * k) : m_key(k), m_value() {}\n'
                     '        key_data(Key * k, Value const & v) : m_key(k), m_value(v) {}\n'
                     '        key_data(Key * k, Value && v) : m_key(k), m_value(std::move(v)) {}\n'
                 )
