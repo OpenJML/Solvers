@@ -1,6 +1,22 @@
 # Solvers
 A collection of SMT solvers used by OpenJML
 
+## obsolete/
+
+Binaries moved here are kept for reference but are not runnable on any
+currently-supported platform, so they are deliberately NOT under
+Solvers-linux/-macos/-macos-arm64/-windows and never get picked up by
+jSMTLIB's up-front solver-availability check.
+
+- `Simplify-1.5.5` (moved 2026-08-23, was in Solvers-macos): a 32-bit
+  i386/PPC-only Mach-O binary (confirmed via `lipo -info`). No macOS since
+  Catalina (10.15+) can execute 32-bit binaries at all -- not even under
+  Rosetta, which only translates x86_64. The Linux (`Simplify-1.5.4`) and
+  Windows (`Simplify-1.5.4.exe`) builds are also 32-bit but remain runnable
+  on their platforms (32-bit Linux binaries still run under a 64-bit
+  kernel; Windows runs 32-bit .exe via WOW64), so only the macOS build is
+  affected.
+
 ## Removed: z3-4.5.0.exe, z3-4.6.0.exe (Windows only)
 
 These two Windows builds were removed (2026-08-23). z3-4.5.0/4.6.0 are
