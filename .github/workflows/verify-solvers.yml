@@ -46,6 +46,11 @@ jobs:
     timeout-minutes: 15
     strategy:
       matrix:
+        # expect_arch is deliberately x86-64 (hyphen) for Linux/Windows but x86_64 (underscore)
+        # for macOS -- not a typo. It's matched as a substring against `file`'s own output below,
+        # and GNU `file`'s ELF description ("...ELF 64-bit LSB pie executable, x86-64, ...") and
+        # macOS's Mach-O description ("...Mach-O 64-bit executable x86_64") spell the same
+        # architecture differently.
         include:
           - os: macos-14
             label: macos-arm64
@@ -122,6 +127,14 @@ jobs:
           fi
         }
 
+        # Counts binaries actually checked below (not just iterated -- the .jar/Simplify/non-.exe
+        # exclusions above don't count) so a silently-empty or entirely-excluded $dir can't pass
+        # this step by never finding anything wrong with anything. nullglob alone doesn't catch
+        # this: with it set, `for f in "$dir"/*` over an empty (or missing) directory simply runs
+        # zero iterations, leaving $fail at its initial 0 -- "PASS" for a directory that was never
+        # actually verified. Confirmed as a real gap, not just theoretical: this is exactly the
+        # failure mode a typo'd/nonexistent download-solvers `subdir` would produce.
+        checked=0
         shopt -s nullglob
         for f in "$dir"/*; do
           base=$(basename "$f")
@@ -137,6 +150,7 @@ jobs:
             esac
           fi
 
+          checked=$((checked + 1))
           echo "::group::$base"
 
           # --- (1) architecture/type check ---
@@ -167,5 +181,10 @@ jobs:
           fi
           echo "::endgroup::"
         done
+
+        if [ "$checked" -eq 0 ]; then
+          echo "::error::No solver binaries were found to check under $dir -- download-solvers may have failed silently, or every entry there was excluded"
+          fail=1
+        fi
 
         exit $fail

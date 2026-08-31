@@ -1,4 +1,4 @@
-name: 'Download OpenJML solver binaries (one platform, nothing else)'
+name: 'Download solver binaries (one platform, nothing else)'
 description: >-
   Sparse, shallow, blobless clone of this repository that fetches only one platform's own
   Solvers-<name> subdirectory -- no other platform's binaries, no git history beyond the single
@@ -44,6 +44,16 @@ runs:
         git -C "${{ inputs.path }}" sparse-checkout set "${{ inputs.subdir }}"
         git -C "${{ inputs.path }}" fetch --depth 1 --filter=blob:none origin "${{ inputs.ref }}"
         git -C "${{ inputs.path }}" checkout FETCH_HEAD
+
+        # A typo'd/nonexistent `subdir` doesn't make sparse-checkout or checkout themselves fail --
+        # cone mode just matches nothing, silently leaving this directory missing or empty. Left
+        # unchecked, that surfaces later as a confusing failure in whatever step first tries to use
+        # a solver binary that was never actually downloaded, far from the actual cause. Fail here
+        # instead, at the point where the real problem is known.
+        if [ ! -d "${{ inputs.path }}/${{ inputs.subdir }}" ] || [ -z "$(ls -A "${{ inputs.path }}/${{ inputs.subdir }}" 2>/dev/null)" ]; then
+          echo "::error::subdir '${{ inputs.subdir }}' not found (or empty) in smtlib/Solvers at ref '${{ inputs.ref }}'" >&2
+          exit 1
+        fi
 
         # Binaries are already committed executable (chmod +x) on Linux/macOS, but a sparse
         # checkout of a fresh clone has occasionally been seen to lose that bit in practice
