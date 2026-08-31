@@ -31,9 +31,19 @@ runs:
     - id: clone
       shell: bash
       run: |
-        git clone -b "${{ inputs.ref }}" --depth 1 --filter=blob:none --sparse \
-          https://github.com/OpenJML/Solvers "${{ inputs.path }}"
+        # `git clone -b <ref>` only accepts a branch/tag name (it looks it up by name in the
+        # remote's ref advertisement) -- it cannot take an arbitrary commit SHA, which `ref`
+        # must support (e.g. a caller pinning to ${{ github.sha }} to test an exact commit).
+        # `git fetch origin <ref>` accepts both a branch/tag name and a raw SHA (GitHub allows
+        # fetching any reachable commit by SHA for public repos), so build the clone from a
+        # bare init + fetch + checkout instead of `clone -b`.
+        mkdir -p "${{ inputs.path }}"
+        git -C "${{ inputs.path }}" init -q
+        git -C "${{ inputs.path }}" remote add origin https://github.com/OpenJML/Solvers
+        git -C "${{ inputs.path }}" sparse-checkout init --cone
         git -C "${{ inputs.path }}" sparse-checkout set "${{ inputs.subdir }}"
+        git -C "${{ inputs.path }}" fetch --depth 1 --filter=blob:none origin "${{ inputs.ref }}"
+        git -C "${{ inputs.path }}" checkout FETCH_HEAD
 
         # Binaries are already committed executable (chmod +x) on Linux/macOS, but a sparse
         # checkout of a fresh clone has occasionally been seen to lose that bit in practice
