@@ -1,9 +1,10 @@
 name: 'Download solver binaries (one platform, nothing else)'
 description: >-
   Sparse, shallow, blobless clone of this repository that fetches only one platform's own
-  Solvers-<name> subdirectory -- no other platform's binaries, no git history beyond the single
-  commit, and none of this repo's own build scripts/README/etc.  Meant to be called from other
-  projects' own workflows (checkkt, jSMTLIB, OpenJML) as well as from workflows in this repo.
+  Solvers-<name> subdirectory -- no other platform's binaries, and no git history beyond the
+  single commit (a few small root-level files -- README.md, the build-* scripts, etc. -- still
+  come along too; cone-mode sparse-checkout always keeps top-level files regardless of scope).
+  Meant to be called from other repos' workflows as well as from workflows in this one.
 
 inputs:
   subdir:
@@ -55,10 +56,9 @@ runs:
           exit 1
         fi
 
-        # Binaries are already committed executable (chmod +x) on Linux/macOS, but a sparse
-        # checkout of a fresh clone has occasionally been seen to lose that bit in practice
-        # elsewhere in this project family -- reapply it defensively. Meaningless (and skipped)
-        # on Windows, which has no execute-permission bit.
+        # Binaries are already committed executable (chmod +x) on Linux/macOS; reapply it
+        # defensively anyway since it's cheap insurance. Meaningless (and skipped) on Windows,
+        # which has no execute-permission bit.
         if [[ "${{ runner.os }}" != "Windows" ]]; then
           chmod +x "${{ inputs.path }}/${{ inputs.subdir }}"/* 2>/dev/null || true
         fi
