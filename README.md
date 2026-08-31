@@ -1,5 +1,5 @@
 # Solvers
-A collection of SMT solvers used by OpenJML
+A collection of SMT solvers used by Deductive Verification tools.
 
 ## obsolete/
 
@@ -21,11 +21,7 @@ jSMTLIB's up-front solver-availability check.
 
 These two Windows builds were removed (2026-08-23). z3-4.5.0/4.6.0 are
 still present and tested normally on Solvers-linux and Solvers-macos --
-this is a Windows-specific removal only, since jSMTLIB's up-front
-solver-availability check treats a missing executable as "skip this
-solver here, warn, don't fail" (see LogicTests.solversFromEnv() in the
-jSMTLIB repo), so simply not having these two .exe files on Windows is
-enough to exclude them there without touching any test configuration.
+this is a Windows-specific removal only.
 
 Reason: on Windows CI, z3-4.5.0.exe and z3-4.6.0.exe produced zero
 output for every single test -- no response to even the first command,
