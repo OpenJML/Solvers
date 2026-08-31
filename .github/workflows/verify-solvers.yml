@@ -90,6 +90,13 @@ jobs:
       shell: bash
       run: |
         set -u
+        # GitHub Actions runs bash steps with errexit (-e) by default. Most solvers legitimately
+        # exit non-zero on empty/malformed input (expected -- see the header comment above), and
+        # `wait "$pid"` inside run_checked below returns that same non-zero status; under errexit,
+        # the very first such exit would silently abort this whole step, skipping every remaining
+        # binary. set +e makes that structurally impossible; $fail (checked explicitly per file
+        # below, and returned via `exit $fail` at the end) is what actually reports failure.
+        set +e
         dir="${{ steps.solvers.outputs.dir }}"
         expect="${{ matrix.expect_arch }}"
         fail=0
