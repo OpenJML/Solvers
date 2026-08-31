@@ -1,0 +1,46 @@
+name: 'Download OpenJML solver binaries (one platform, nothing else)'
+description: >-
+  Sparse, shallow, blobless clone of this repository that fetches only one platform's own
+  Solvers-<name> subdirectory -- no other platform's binaries, no git history beyond the single
+  commit, and none of this repo's own build scripts/README/etc.  Meant to be called from other
+  projects' own workflows (checkkt, jSMTLIB, OpenJML) as well as from workflows in this repo.
+
+inputs:
+  subdir:
+    description: >-
+      Which platform subdirectory to fetch: Solvers-linux, Solvers-linux-arm64, Solvers-macos,
+      Solvers-macos-arm64, or Solvers-windows.
+    required: true
+  ref:
+    description: 'Branch, tag, or commit of OpenJML/Solvers to clone.'
+    required: false
+    default: master
+  path:
+    description: 'Where to clone the repo. The requested subdir ends up at <path>/<subdir>.'
+    required: false
+    default: Solvers
+
+outputs:
+  dir:
+    description: 'Absolute path to the downloaded platform subdirectory.'
+    value: ${{ steps.clone.outputs.dir }}
+
+runs:
+  using: composite
+  steps:
+    - id: clone
+      shell: bash
+      run: |
+        git clone -b "${{ inputs.ref }}" --depth 1 --filter=blob:none --sparse \
+          https://github.com/OpenJML/Solvers "${{ inputs.path }}"
+        git -C "${{ inputs.path }}" sparse-checkout set "${{ inputs.subdir }}"
+
+        # Binaries are already committed executable (chmod +x) on Linux/macOS, but a sparse
+        # checkout of a fresh clone has occasionally been seen to lose that bit in practice
+        # elsewhere in this project family -- reapply it defensively. Meaningless (and skipped)
+        # on Windows, which has no execute-permission bit.
+        if [[ "${{ runner.os }}" != "Windows" ]]; then
+          chmod +x "${{ inputs.path }}/${{ inputs.subdir }}"/* 2>/dev/null || true
+        fi
+
+        echo "dir=$GITHUB_WORKSPACE/${{ inputs.path }}/${{ inputs.subdir }}" >> "$GITHUB_OUTPUT"

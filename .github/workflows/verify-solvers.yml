@@ -1,0 +1,164 @@
+name: Verify solver binaries
+
+## For each of the 5 platforms used across this project family's own CI (OpenJML, jSMTLIB,
+## checkkt), downloads just that platform's own Solvers-<name> subdirectory -- via the
+## download-solvers action below, the same reusable action other projects' workflows can call --
+## then checks every solver binary in it two independent ways:
+##
+##   1. `file` reports an executable format/architecture matching the runner it's running on.
+##      Catches a binary built for the wrong OS/architecture ending up in the wrong platform
+##      folder (this is exactly how Simplify-1.5.5's 32-bit-only build was originally caught by
+##      hand, via `lipo -info` -- see README.md's obsolete/ section).
+##   2. The binary actually launches when invoked with empty stdin (so nothing blocks waiting on
+##      an SMT-LIB script that never arrives), under a short per-binary watchdog in case one hangs
+##      anyway. Catches a binary with the right format that still fails at process-launch time for
+##      some other reason -- e.g. a missing shared library / DLL dependency that `file` can't see
+##      (this is exactly the failure mode README.md's removed z3-4.5.0.exe/z3-4.6.0.exe describes:
+##      right architecture, zero output, silent crash-on-startup).
+##
+## A non-zero exit from a solver binary is NOT by itself a failure here: most of these tools exit
+## non-zero on empty/malformed SMT-LIB input, which is expected and fine. What DOES fail this
+## check: the OS refusing to launch the binary at all ("cannot execute binary file" / "exec format
+## error" / "not a valid Win32 application"), a dynamic-linker error, a crash, or the binary still
+## running when the watchdog fires.
+##
+## .jar files (smtinterpol) are skipped entirely: they are not native/OS-specific, need `java -jar`
+## to run at all, and have no meaningful "architecture". On Windows, only .exe files are treated as
+## top-level executables to check -- .dll/.lib/.xml files are libraries/metadata, not standalone
+## programs.
+##
+## Known, already-documented exception this workflow is expected to flag (not a bug in the check):
+## Simplify-1.5.4 (Solvers-linux) and Simplify-1.5.4.exe (Solvers-windows) are 32-bit builds kept
+## deliberately (see README.md's obsolete/ section) because 32-bit binaries can still run on
+## 64-bit Linux/Windows -- but they will not match this workflow's expected 64-bit architecture
+## string, and may also fail the execution check if a runner image lacks 32-bit compatibility
+## libraries. Treat a failure specifically on those two files as informational unless/until this
+## workflow is given an explicit allowlist for them.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ master ]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        include:
+          - os: macos-14
+            label: macos-arm64
+            solvers_subdir: Solvers-macos-arm64
+            expect_arch: arm64
+          - os: macos-15-intel
+            label: macos-15-x86_64
+            solvers_subdir: Solvers-macos
+            expect_arch: x86_64
+          - os: ubuntu-24.04
+            label: ubuntu
+            solvers_subdir: Solvers-linux
+            expect_arch: x86-64
+          - os: ubuntu-24.04-arm
+            label: ubuntu-arm64
+            solvers_subdir: Solvers-linux-arm64
+            expect_arch: aarch64
+          - os: windows-2022
+            label: windows
+            solvers_subdir: Solvers-windows
+            expect_arch: x86-64
+      fail-fast: false
+
+    steps:
+    # Sparse checkout of just this repo's own .github/ -- all that's needed to load the local
+    # download-solvers action definition below; the actual solver binaries are fetched separately,
+    # by that action itself, into their own directory.
+    - name: Checkout .github (for the download-solvers action)
+      uses: actions/checkout@v6
+      with:
+        sparse-checkout: .github
+
+    - name: Download solvers for this platform
+      id: solvers
+      uses: ./.github/actions/download-solvers
+      with:
+        subdir: ${{ matrix.solvers_subdir }}
+        ref: ${{ github.sha }}
+
+    - name: Check architecture and launchability of every solver binary
+      shell: bash
+      run: |
+        set -u
+        dir="${{ steps.solvers.outputs.dir }}"
+        expect="${{ matrix.expect_arch }}"
+        fail=0
+
+        # Runs "$1" with empty stdin under a hand-rolled watchdog (no reliance on GNU coreutils'
+        # timeout, which macOS runners don't have by default). Sets $out/$code as globals; $code
+        # is forced to 124 (matching GNU timeout's own convention) if the watchdog had to kill it.
+        run_checked() {
+          local bin="$1" tmp
+          tmp=$(mktemp)
+          "$bin" < /dev/null > "$tmp" 2>&1 &
+          local pid=$!
+          ( sleep 10; kill -KILL "$pid" 2>/dev/null ) &
+          local watchdog=$!
+          wait "$pid" 2>/dev/null
+          code=$?
+          kill "$watchdog" 2>/dev/null
+          wait "$watchdog" 2>/dev/null
+          out=$(cat "$tmp")
+          rm -f "$tmp"
+          # 137 == 128 + SIGKILL: only our own watchdog sends that signal here.
+          if [ "$code" -eq 137 ]; then
+            code=124
+          fi
+        }
+
+        shopt -s nullglob
+        for f in "$dir"/*; do
+          base=$(basename "$f")
+
+          case "$base" in
+            *.jar) continue ;;
+          esac
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            case "$base" in
+              *.exe) ;;
+              *) continue ;;
+            esac
+          fi
+
+          echo "::group::$base"
+
+          # --- (1) architecture/type check ---
+          info=$(file -b "$f")
+          echo "file: $info"
+          if [[ "$info" != *"$expect"* ]]; then
+            echo "::error::$base: expected '$expect' in file-type output, got: $info"
+            fail=1
+            echo "::endgroup::"
+            continue
+          fi
+
+          # --- (2) actually launches ---
+          run_checked "$f"
+          echo "${out:0:2000}"
+          if [ "$code" -eq 124 ]; then
+            echo "::error::$base: did not exit within 10s on an empty-stdin run"
+            fail=1
+          elif [ "$code" -eq 126 ] || [ "$code" -eq 127 ]; then
+            echo "::error::$base: could not be executed (exit $code): $out"
+            fail=1
+          elif echo "$out" | grep -qiE \
+              'cannot execute binary file|exec format error|not a valid win32 application|error while loading shared libraries|segmentation fault|illegal instruction'; then
+            echo "::error::$base: launch failed: $out"
+            fail=1
+          else
+            echo "OK: exited $code"
+          fi
+          echo "::endgroup::"
+        done
+
+        exit $fail
