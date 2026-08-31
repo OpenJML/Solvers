@@ -11,6 +11,11 @@ run-name: "Build Z3 ${{ inputs.z3_version }} (windows)"
 ##
 ## Older z3 (detected by absence of #include <span>) uses mk_make.py, which
 ## auto-detects MSVC and generates an nmake Makefile.  Newer z3 uses CMake.
+##
+## Shares most of its source-patch logic with build-z3.yml by copy, not a shared script/action --
+## these build old, already-working z3 releases that are rebuilt rarely, so the duplication's
+## upkeep cost is accepted rather than worth the refactor risk. Any patch present in one file's
+## own copy but not the other's is called out at the patch itself, not just left silent.
 
 on:
   workflow_dispatch:
@@ -152,6 +157,9 @@ jobs:
         ##     tail_matrix.h: ref_row::operator[] calls m_A.get_elem() but tail_matrix has
         ##     no get_elem without Z3DEBUG. Replace with return T(); using a block comment
         ##     so the closing } on the same source line is not accidentally commented out.
+        ##     (build-z3.yml's own copy of this step also fixes static_matrix_def.h's
+        ##     get_value_of_column_cell -> get_val, needed only for Apple Clang 16+; not carried
+        ##     over here since MSVC hasn't been observed to hit that one.)
         python3 -c "
         import pathlib
         p = pathlib.Path('src/math/lp/static_matrix.h')
@@ -184,6 +192,11 @@ jobs:
                 p.write_text(new_t)
                 print('Fixed m_low_bound typo in column_info.h')
         "
+
+        ## No "5d" here: build-z3.yml's own copy adds explicit constructors to
+        ## obj_hashtable.h's key_data struct, needed only for Apple Clang 15's (macos-14)
+        ## stricter aggregate-initialization rules -- not carried over here, same reasoning
+        ## as the static_matrix_def.h note on 5b above.
 
         ## 6. Re-encode any Latin-1 bytes in C++ source files to UTF-8.
         python3 -c "

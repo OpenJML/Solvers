@@ -30,6 +30,11 @@ run-name: "Build Z3 ${{ inputs.z3_version }}"
 ## A single release is created once by the 'prepare' job; every platform's
 ## binary is uploaded to that same release.  The tag is based on the Z3
 ## version and a UTC timestamp so each workflow run produces a new release.
+##
+## Shares most of its source-patch logic with build-win.yml by copy, not a shared script/action --
+## these build old, already-working z3 releases that are rebuilt rarely, so the duplication's
+## upkeep cost is accepted rather than worth the refactor risk. Any patch present in one file's
+## own copy but not the other's is called out at the patch itself, not just left silent.
 
 on:
   workflow_dispatch:
