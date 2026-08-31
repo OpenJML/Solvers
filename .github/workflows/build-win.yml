@@ -5,7 +5,7 @@ run-name: "Build Z3 ${{ inputs.z3_version }} (windows)"
 ## the binary as a GitHub release asset.  Z3 version is parameterised.
 ##
 ## Trigger manually via the GitHub UI or:
-##   gh workflow run build-win.yml --repo OpenJML/Solvers --ref master --field z3_version=<version>
+##   gh workflow run build-win.yml --repo smtlib/Solvers --ref master --field z3_version=<version>
 ## The build-win convenience script wraps this call.
 ## For Linux and macOS binaries use build-z3.yml.
 ##

@@ -12,7 +12,7 @@ inputs:
       Solvers-macos-arm64, or Solvers-windows.
     required: true
   ref:
-    description: 'Branch, tag, or commit of OpenJML/Solvers to clone.'
+    description: 'Branch, tag, or commit of smtlib/Solvers to clone.'
     required: false
     default: master
   path:
@@ -39,7 +39,7 @@ runs:
         # bare init + fetch + checkout instead of `clone -b`.
         mkdir -p "${{ inputs.path }}"
         git -C "${{ inputs.path }}" init -q
-        git -C "${{ inputs.path }}" remote add origin https://github.com/OpenJML/Solvers
+        git -C "${{ inputs.path }}" remote add origin https://github.com/smtlib/Solvers
         git -C "${{ inputs.path }}" sparse-checkout init --cone
         git -C "${{ inputs.path }}" sparse-checkout set "${{ inputs.subdir }}"
         git -C "${{ inputs.path }}" fetch --depth 1 --filter=blob:none origin "${{ inputs.ref }}"
