@@ -27,13 +27,12 @@ name: Verify solver binaries
 ## top-level executables to check -- .dll/.lib/.xml files are libraries/metadata, not standalone
 ## programs.
 ##
-## Known, already-documented exception this workflow is expected to flag (not a bug in the check):
-## Simplify-1.5.4 (Solvers-linux) and Simplify-1.5.4.exe (Solvers-windows) are 32-bit builds kept
-## deliberately (see README.md's obsolete/ section) because 32-bit binaries can still run on
-## 64-bit Linux/Windows -- but they will not match this workflow's expected 64-bit architecture
-## string, and may also fail the execution check if a runner image lacks 32-bit compatibility
-## libraries. Treat a failure specifically on those two files as informational unless/until this
-## workflow is given an explicit allowlist for them.
+## Simplify-1.5.4 (Solvers-linux) and Simplify-1.5.4.exe (Solvers-windows) are excluded below: they
+## are 32-bit builds kept deliberately (see README.md's obsolete/ section) because 32-bit binaries
+## can still run on 64-bit Linux/Windows, so failing this workflow's 64-bit architecture check is
+## expected, not a real problem -- confirmed by the first real run of this workflow (2026-08-31):
+## both were the *only* failures, on every platform where they're present, exclusively an
+## architecture mismatch (Intel 80386 / i386), nothing else.
 
 on:
   workflow_dispatch:
@@ -129,6 +128,7 @@ jobs:
 
           case "$base" in
             *.jar) continue ;;
+            Simplify-1.5.4|Simplify-1.5.4.exe) continue ;;
           esac
           if [[ "${{ runner.os }}" == "Windows" ]]; then
             case "$base" in
